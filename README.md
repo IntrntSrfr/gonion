@@ -1,7 +1,5 @@
 # Gonion - An onion routing service
 
----
-
 This is an onion routing service that consists of a client, any amount of available nodes,
 and a directory node.
 
