@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -60,6 +61,15 @@ func AESDecrypt(key, data []byte) []byte {
 	return pt
 }
 
+func closeConn(c net.Conn) {
+	err := c.Close()
+	if err != nil {
+		log.Println(err)
+	}
+	log.Println("closed connection")
+
+}
+
 type HTTPRequest struct {
 	Method  string              `json:"method"`
 	Scheme  string              `json:"scheme"`
@@ -68,7 +78,30 @@ type HTTPRequest struct {
 	Queries map[string][]string `json:"queries"`
 }
 
+const MaxContent = 64
+
 func main() {
+	/*
+		r := make([]byte, 256)
+		rand.Read(r)
+		fmt.Println(string(r))
+		reader := bytes.NewReader(r)
+
+		buf := new(bytes.Buffer)
+		for{
+			tmp := make([]byte, 70)
+			n, err := reader.Read(tmp)
+			if err != nil {
+				log.Println(err)
+				break
+			}
+			buf.Write(tmp)
+			fmt.Println("bytes read:", n)
+		}
+
+		fmt.Println(buf.String())
+
+		return*/
 
 	a := "http://localhost:9051/api/nodes?weed=fart"
 	adr, err := url.Parse(a)
@@ -87,6 +120,8 @@ func main() {
 	}
 
 	d, _ := json.Marshal(req)
+	innerMsgBuffer := bytes.NewBuffer(d)
+	fmt.Println(innerMsgBuffer.Len())
 
 	// first we must get the nodes and their public keys
 
@@ -106,37 +141,71 @@ func main() {
 		log.Fatal("too few nodes")
 	}
 
-	// this creates the inner packet, with the actual message.
-	var packet []byte
-	packet = append(packet, 0x81, 0x00)
-	packet = append(packet, d...)
-
-	// can make a for loop here to loop if request is large, breaking if its small enough and sends the final message
-
-	// create the packets
 	node1 := nodes[0]
-
-	// add 2x relay header
-	for i := 2; i > 0; i-- {
-		node := nodes[i]
-		ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
-		if err != nil {
-			log.Fatal(err)
-		}
-		nodeIP := ap.Addr().As4()
-		nodePort := ap.Port()
-
-		packet = append([]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, packet...) // add port
-		packet = append([]byte{nodeIP[0], nodeIP[1], nodeIP[2], nodeIP[3]}, packet...)            // add ip
-		packet = append([]byte{0x40, 0x00}, packet...)                                            // add header
-	}
-
 	// dont need a layer for node 1 as its directly connected
 	c, err := net.Dial("tcp", fmt.Sprintf("%v:%v", node1.IP, node1.Port))
 	if err != nil {
 		log.Fatal(err)
 	}
-	c.Write(packet)
+	defer closeConn(c)
+
+	// partition the body into sizes we want to manage
+	// send each packet separately to the next node
+	for {
+		partialMsg := make([]byte, MaxContent)
+		n, err := innerMsgBuffer.Read(partialMsg)
+		if err != nil && err != io.EOF {
+			log.Fatal(err)
+		}
+		partialMsg = partialMsg[:n]
+		if n != MaxContent {
+			// final packet
+			partialMsg = append([]byte{0x81, 0x00}, partialMsg...)
+		} else {
+			// full size packet
+			partialMsg = append([]byte{0x80, 0x00}, partialMsg...)
+		}
+
+		// packet should be encrypted here with node 3 key
+
+		// here we add the layers for the 2 other nodes
+
+		// add 2x relay header
+		for i := 2; i > 0; i-- {
+			node := nodes[i]
+			ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
+			if err != nil {
+				log.Fatal(err)
+			}
+			nodeIP := ap.Addr().As4()
+			nodePort := ap.Port()
+
+			partialMsg = append([]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, partialMsg...) // add port
+			partialMsg = append([]byte{nodeIP[0], nodeIP[1], nodeIP[2], nodeIP[3]}, partialMsg...)            // add ip
+			if n != MaxContent {
+				// final packet
+				partialMsg = append([]byte{0x41, 0x00}, partialMsg...) // add header
+			} else {
+				// full size packet
+				partialMsg = append([]byte{0x40, 0x00}, partialMsg...) // add header
+			}
+
+			// it should be a layer of encryption here
+		}
+
+		_, err = c.Write(partialMsg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if n != MaxContent {
+			break
+		}
+	}
+	/*
+		ans := make([]byte, 1024)
+		c.Read(ans)
+		fmt.Println(string(ans))
+	*/
 }
 
 /*
