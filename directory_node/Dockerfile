@@ -8,6 +8,6 @@ RUN go mod download
 
 RUN go build -o api
 
-EXPOSE 5555
+EXPOSE 9051
 
 CMD [ "./api" ]

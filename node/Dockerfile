@@ -8,6 +8,6 @@ RUN go mod download
 
 RUN go build -o node
 
-EXPOSE 9001
+EXPOSE 9050
 
 CMD [ "./node" ]
