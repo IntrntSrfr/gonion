@@ -1,6 +1,7 @@
-package main
+package directory
 
 import (
+	"github.com/intrntsrfr/gonion"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -17,47 +18,34 @@ type SuccessResponse struct {
 // change handler to use a map of nodes instead, so that IPs can be used as key.
 // it will make it easier to ping and remove them when that is needed.
 
-type Handler struct {
+type Directory struct {
 	R     *gin.Engine
-	Nodes []*Node
+	Nodes []*gonion.NodeInfo
 }
 
-func main() {
-	r := gin.Default()
-
-	h := &Handler{R: r, Nodes: make([]*Node, 0)}
-	h.RegisterControllers()
-
-	h.Serve()
+func (d *Directory) Serve() {
+	d.registerControllers()
+	http.ListenAndServe(":9051", d.R)
 }
 
-func (h *Handler) Serve() {
-	http.ListenAndServe(":9051", h.R)
-}
-
-func NewHandler(r *gin.Engine) *Handler {
-
-	return &Handler{
+func NewDirectory(r *gin.Engine) *Directory {
+	return &Directory{
 		R:     r,
-		Nodes: make([]*Node, 0),
+		Nodes: []*gonion.NodeInfo{},
 	}
 }
 
-func (h *Handler) RegisterControllers() {
-	h.R.GET("/api/nodes", func(c *gin.Context) {
-		c.JSON(http.StatusOK, h.Nodes)
-	})
-	h.R.POST("/api/nodes", h.addNode)
+func (d *Directory) registerControllers() {
+	d.R.GET("/api/nodes", d.getNodes)
+	d.R.POST("/api/nodes", d.addNode)
 }
 
-type Node struct {
-	IP        string `json:"ip"`
-	Port      string `json:"port"`
-	PublicKey []byte `json:"public_key"`
+func (d *Directory) getNodes(c *gin.Context) {
+	c.JSON(http.StatusOK, d.Nodes)
 }
 
-func (h *Handler) addNode(c *gin.Context) {
-	n := Node{}
+func (d *Directory) addNode(c *gin.Context) {
+	n := gonion.NodeInfo{}
 	if err := c.BindJSON(&n); err != nil {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
@@ -66,7 +54,7 @@ func (h *Handler) addNode(c *gin.Context) {
 		Code: 1,
 		Data: "node added",
 	})
-	h.Nodes = append(h.Nodes, &n)
+	d.Nodes = append(d.Nodes, &n)
 }
 
 // test nodes every minute or so to keep them added to node list

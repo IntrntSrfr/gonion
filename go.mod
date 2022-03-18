@@ -1,4 +1,4 @@
-module github.com/intrntsrfr/gonion_node
+module github.com/intrntsrfr/gonion
 
 go 1.18
 
