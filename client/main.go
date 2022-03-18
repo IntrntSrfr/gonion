@@ -80,51 +80,21 @@ type HTTPRequest struct {
 
 const MaxContent = 64
 
-func main() {
-	/*
-		r := make([]byte, 256)
-		rand.Read(r)
-		fmt.Println(string(r))
-		reader := bytes.NewReader(r)
-
-		buf := new(bytes.Buffer)
-		for{
-			tmp := make([]byte, 70)
-			n, err := reader.Read(tmp)
-			if err != nil {
-				log.Println(err)
-				break
-			}
-			buf.Write(tmp)
-			fmt.Println("bytes read:", n)
-		}
-
-		fmt.Println(buf.String())
-
-		return*/
-
-	a := "http://localhost:9051/api/nodes?weed=fart"
-	adr, err := url.Parse(a)
+func ParseRequest(inp string) *HTTPRequest {
+	u, err := url.Parse(inp)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	fmt.Println(adr.Scheme, adr.Host, adr.Path, adr.Query())
-
-	req := &HTTPRequest{
+	return &HTTPRequest{
 		Method:  "GET",
-		Scheme:  adr.Scheme,
-		Host:    adr.Host,
-		Path:    adr.Path,
-		Queries: adr.Query(),
+		Scheme:  u.Scheme,
+		Host:    u.Host,
+		Path:    u.Path,
+		Queries: u.Query(),
 	}
+}
 
-	d, _ := json.Marshal(req)
-	innerMsgBuffer := bytes.NewBuffer(d)
-	fmt.Println(innerMsgBuffer.Len())
-
-	// first we must get the nodes and their public keys
-
+func GetNodes() []*Node {
 	res, err := http.DefaultClient.Get("http://localhost:9051/api/nodes")
 	if err != nil {
 		log.Fatal(err)
@@ -136,6 +106,19 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	return nodes
+}
+
+func main() {
+	a := "http://localhost:9051/api/nodes?weed=fart"
+	req := ParseRequest(a)
+
+	d, _ := json.Marshal(req)
+	innerMsgBuffer := bytes.NewBuffer(d)
+	log.Println("msg buffer length:", len(d))
+
+	// first we must get the nodes and their public keys
+	nodes := GetNodes()
 
 	if len(nodes) < 3 {
 		log.Fatal("too few nodes")
@@ -170,6 +153,9 @@ func main() {
 
 		// here we add the layers for the 2 other nodes
 
+		// the loop body can probably be turned into a function call instead, making it much easier to deal with
+		// when it comes to encryption
+
 		// add 2x relay header
 		for i := 2; i > 0; i-- {
 			node := nodes[i]
@@ -201,11 +187,22 @@ func main() {
 			break
 		}
 	}
-	/*
-		ans := make([]byte, 1024)
-		c.Read(ans)
-		fmt.Println(string(ans))
-	*/
+
+	// read the response
+	resp := new(bytes.Buffer)
+	for {
+		tmp := make([]byte, 1024)
+		_, err := c.Read(tmp)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Println(err)
+		}
+		resp.Write(tmp)
+	}
+
+	fmt.Println(resp.String())
 }
 
 /*
