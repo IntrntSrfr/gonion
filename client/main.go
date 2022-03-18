@@ -99,7 +99,12 @@ func GetNodes() []*Node {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		err = res.Body.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}()
 
 	var nodes []*Node
 	err = json.NewDecoder(res.Body).Decode(&nodes)
@@ -197,7 +202,7 @@ func main() {
 			if err == io.EOF {
 				break
 			}
-			log.Println(err)
+			log.Fatal(err)
 		}
 		resp.Write(tmp)
 	}
