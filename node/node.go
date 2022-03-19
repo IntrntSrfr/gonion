@@ -5,12 +5,15 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
-	"github.com/intrntsrfr/gonion/packet"
 	"io"
 	"log"
 	"net"
+	"strconv"
+
+	"github.com/intrntsrfr/gonion/packet"
 )
 
 type Node struct {
@@ -58,156 +61,138 @@ func (h *Node) Listen() {
 			continue
 		}
 		//c.SetDeadline(time.Now().Add(time.Second * 30))
-		go h.handle(c)
+		go h.Handle(c)
 	}
 }
 
-func (h *Node) handle(c net.Conn) {
-	defer func() {
-		err := c.Close()
+func closeConn(c net.Conn, direction string) {
+	err := c.Close()
+	if err != nil {
+		log.Println(err)
+	}
+	log.Println(fmt.Sprint("closed ", direction, " connection"))
+}
+
+func (h *Node) Handle(c net.Conn) {
+	defer closeConn(c, "incoming")
+
+	// read infinitely
+	for {
+		tmp := make([]byte, 64)
+		_, err := io.ReadFull(c, tmp)
 		if err != nil {
-			log.Println(err)
+			return
+			/*
+				if err != io.EOF {
+					log.Println(err)
+					return
+				}
+				continue
+			*/
 		}
-		log.Println("closed incoming connection")
-	}()
 
-	//nodeBody := new(bytes.Buffer)
+		p := packet.NewPacketFromBytes(tmp)
 
-	// read a new 1kb packet
-	tmp := make([]byte, 1024)
-	n, err := c.Read(tmp)
-	if err != nil && err != io.EOF {
+		switch p.CurrentFrameType() {
+		case packet.DataPacket:
+			h.processData(c, p)
+		case packet.RelayPacket:
+			h.processRelay(c, p)
+		case packet.AskPacket:
+			h.processAsk(c, p)
+		default:
+			continue
+		}
+	}
+}
+
+func (h *Node) processData(c net.Conn, f *packet.Packet) {
+	log.Println("this is a data packet")
+	f.PrintInfo()
+	f.PopBytes(2)
+
+	for {
+		tmp := make([]byte, 64)
+		_, err := c.Read(tmp)
+		if err != nil {
+			return
+		}
+
+		p := packet.NewPacketFromBytes(tmp)
+		p.PrintInfo()
+		fmt.Println(string(p.Bytes()))
+		if p.Final() {
+			break
+		}
+	}
+
+	resp := packet.NewPacket()
+	resp.AddDataFrame([]byte("this is a response!!!"), true)
+	resp.Pad()
+	log.Println("attempting to reply")
+	resp.PrintInfo()
+	c.Write(resp.Bytes())
+}
+
+func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
+	log.Println("this is a relay packet")
+	f.PrintInfo()
+	f.PopBytes(2)
+
+	ipBytes := f.PopBytes(4)
+	portBytes := f.PopBytes(2)
+	ip := net.IP{ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3]}
+	port := strconv.Itoa(int(binary.BigEndian.Uint16(portBytes)))
+
+	// dial next node
+	nc, err := net.Dial("tcp", fmt.Sprint(ip.To4().String(), ":", port))
+	if err != nil {
 		log.Println(err)
 		return
 	}
-	fmt.Println("read packet with byte length:", n)
+	defer closeConn(nc, "outgoing")
 
-	p := packet.NewPacketFromBytes(tmp[:n])
+	f.Pad()
+	nc.Write(f.Bytes())
 
-	// here we should also decrypt the packet to see whatever contents come next
+	for {
+		tmp := make([]byte, 64)
+		_, err := c.Read(tmp)
+		if err != nil {
+			return
+		}
+		p := packet.NewPacketFromBytes(tmp)
+		p.PrintInfo()
+		p.PopBytes(8)
+		p.Pad()
+		nc.Write(p.Bytes())
 
-	// find what kinda packet it is
-	switch p.CurrentFrameType() {
-	case packet.DataPacket:
-		fmt.Println("this is a data packet")
-		// if data packets are present, read till FIN bit, then break?
-
-	case packet.RelayPacket:
-		fmt.Println("this is a relay packet")
-		// decode packet, send it to next receiver
-		// start reading all incoming data, then write it back to the old connection, until EOF?
-		/*
-			ip := net.IP{tmp[2], tmp[3], tmp[4], tmp[5]}
-			portInt := binary.BigEndian.Uint16(tmp[6:8])
-			portString := strconv.Itoa(int(portInt))
-			fmt.Println(ip.String(), portString)
-
-			// dial the next connection
-			nc, err := net.Dial("tcp", fmt.Sprintf("%v:%v", ip.To4().String(), portString))
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			defer nc.Close()
-		*/
-	case packet.AskPacket:
-		fmt.Println("this is an ask packet")
-		// here we should read the body contents after 2 bytes to find the secret from the client.
-		// store the secret. generate a secret, send it back to the previous connection.
-	default:
+		if p.Final() {
+			break
+		}
 	}
 
-	p.PrintInfo()
-
-	//c.Write([]byte("this is your response!!!"))
-
-	/*
-
-		// change this so it reads till its got a final packet?
-		buf := make([]byte, 1024)
-		n, err := c.Read(buf)
-		if err != nil && err != io.EOF {
-			log.Println(err)
-		}
-		fmt.Println("bytes read:", n)
-
-		fmt.Println(buf[:n])
-		fmt.Println(string(buf[:n]))
-
-		header := buf[0]
-
-		// first we want to know what kinda packet header it is
-		if header&0x80 == 0x80 {
-			// if its a data packet
-			fmt.Println("this is a data packet")
-			req := HTTPRequest{}
-			err = json.Unmarshal(buf[2:n], &req)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-
-			res, _ := http.Get(fmt.Sprintf("%v://%v%v", req.Scheme, req.Host, req.Path))
-			defer res.Body.Close()
-
-			for {
-				part := make([]byte, 1024)
-				_, err = res.Body.Read(part)
-				if err != nil && err == io.EOF {
-					break
-				}
-			}
-
-			fmt.Println(req)
+	for {
+		tmp := make([]byte, 64)
+		_, err := nc.Read(tmp)
+		if err != nil {
 			return
-
-			// write back
-			//c.Write([]byte("here is your response!!!"))
-
-			// here we can do http request, get a result, and write it back to the other guy! :)
-
-		} else if header&0x40 == 0x40 {
-			// if its a relay packet
-			fmt.Println("this is a relay packet")
-
-			// read byte 2,3,4,5,6,7 for ip and port
-			ip := net.IP{buf[2], buf[3], buf[4], buf[5]}
-			portInt := binary.BigEndian.Uint16(buf[6:8])
-			portString := strconv.Itoa(int(portInt))
-			fmt.Println(ip.String(), portString)
-
-			nc, err := net.Dial("tcp", fmt.Sprintf("%v:%v", ip.To4().String(), portString))
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			defer func() {
-				err := nc.Close()
-				if err != nil {
-					log.Println()
-				}
-				log.Println("closed outgoing connection")
-			}()
-
-			// write the entire buffer to the next relay
-			nc.Write(buf[8:n])
-
-			// read the whole answer
-			ans := make([]byte, 1024)
-			for {
-				_, err = nc.Read(ans)
-				if err != nil {
-					log.Println(err)
-					break
-				}
-
-				c.Write(ans)
-			}
-		} else if header&0x20 == 0x20 {
-			// this is an ask packet
-			// we use this to find the client secret in the data and return one as well
 		}
-	*/
+		p := packet.NewPacketFromBytes(tmp)
+		p.PrintInfo()
+		c.Write(p.Bytes())
+		if p.Final() {
+			break
+		}
+	}
+
+}
+
+func (h *Node) processAsk(c net.Conn, f *packet.Packet) {
+	log.Println("this is an ask packet")
+	f.PrintInfo()
+	f.PopBytes(2)
+
 }
 
 /*
@@ -281,9 +266,4 @@ func (h *Node) Encrypt(data []byte) ([]byte, error) {
 
 func (h *Node) Decrypt(data []byte) ([]byte, error) {
 	return rsa.DecryptOAEP(sha256.New(), rand.Reader, h.privKey, data, []byte(""))
-}
-
-func handle(c net.Conn) {
-	defer c.Close()
-	log.Println(c.RemoteAddr())
 }

@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/intrntsrfr/gonion/client"
-	"github.com/intrntsrfr/gonion/packet"
 	"io"
 	"log"
 	"net"
 	"net/netip"
+
+	"github.com/intrntsrfr/gonion/client"
+	"github.com/intrntsrfr/gonion/packet"
 )
 
 func closeConn(c net.Conn) {
@@ -21,7 +22,8 @@ func closeConn(c net.Conn) {
 
 }
 
-const MaxContent = 64
+const MaxContent = packet.MaxPacketSize - (NodeCount-1)*8 - 4
+const NodeCount = 3
 
 func main() {
 
@@ -79,9 +81,9 @@ func main() {
 			// it should be a layer of encryption here
 		}
 
+		p.Pad()
 		p.PrintInfo()
-
-		_, err = c.Write(partialMsg)
+		_, err = c.Write(p.Bytes())
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -90,10 +92,12 @@ func main() {
 		}
 	}
 
+	log.Println("i will now try to read a response")
+
 	// read the response
 	resp := new(bytes.Buffer)
 	for {
-		tmp := make([]byte, 1024)
+		tmp := make([]byte, 64)
 		_, err := c.Read(tmp)
 		if err != nil {
 			if err == io.EOF {
@@ -101,7 +105,12 @@ func main() {
 			}
 			log.Fatal(err)
 		}
+		p := packet.NewPacketFromBytes(tmp)
+		p.PrintInfo()
 		resp.Write(tmp)
+		if p.Final() {
+			break
+		}
 	}
 
 	fmt.Println(resp.String())
