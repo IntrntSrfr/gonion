@@ -1,18 +1,22 @@
 package node
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"strconv"
 
+	"github.com/intrntsrfr/gonion"
 	"github.com/intrntsrfr/gonion/packet"
 )
 
@@ -78,7 +82,7 @@ func (h *Node) Handle(c net.Conn) {
 
 	// read infinitely
 	for {
-		tmp := make([]byte, 64)
+		tmp := make([]byte, 512)
 		_, err := io.ReadFull(c, tmp)
 		if err != nil {
 			return
@@ -108,30 +112,59 @@ func (h *Node) Handle(c net.Conn) {
 
 func (h *Node) processData(c net.Conn, f *packet.Packet) {
 	log.Println("this is a data packet")
-	f.PrintInfo()
-	f.PopBytes(2)
+
+	req := new(bytes.Buffer)
 
 	for {
-		tmp := make([]byte, 64)
+		f.PrintInfo()
+		header := f.PopBytes(2)
+		length := int(binary.BigEndian.Uint16(f.PopBytes(2)))
+		fmt.Println(header, length)
+
+		req.Write(f.Bytes()[:length])
+
+		if header[0]&0x1 == 1 {
+			break
+		}
+
+		tmp := make([]byte, 512)
 		_, err := c.Read(tmp)
 		if err != nil {
 			return
 		}
+		f = packet.NewPacketFromBytes(tmp)
+	}
+	fmt.Println(req.String())
+	httpreq := gonion.HTTPRequest{}
+	json.Unmarshal(req.Bytes(), &httpreq)
 
-		p := packet.NewPacketFromBytes(tmp)
+	fmt.Println(httpreq)
+
+	res, err := http.Get(fmt.Sprintf("%v://%v%v", httpreq.Scheme, httpreq.Host, httpreq.Path))
+	if err != nil {
+		c.Write(packet.NewPacket().AddDataFrame([]byte("fail army"), true).Bytes())
+		c.Close()
+		return
+	}
+	defer res.Body.Close()
+	log.Println("attempting to reply")
+	for {
+		part := make([]byte, 508)
+		n, err := res.Body.Read(part)
+		if err != nil && err != io.EOF {
+			c.Write(packet.NewPacket().AddDataFrame([]byte("fail army"), true).Bytes())
+			c.Close()
+			break
+		}
+		p := packet.NewPacket()
+		p.AddDataFrame(part[:n], n != 508)
+		p.Pad()
 		p.PrintInfo()
-		fmt.Println(string(p.Bytes()))
-		if p.Final() {
+		c.Write(p.Bytes())
+		if n != 508 {
 			break
 		}
 	}
-
-	resp := packet.NewPacket()
-	resp.AddDataFrame([]byte("this is a response!!!"), true)
-	resp.Pad()
-	log.Println("attempting to reply")
-	resp.PrintInfo()
-	c.Write(resp.Bytes())
 }
 
 func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
@@ -152,30 +185,32 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 	}
 	defer closeConn(nc, "outgoing")
 
-	f.Pad()
-	nc.Write(f.Bytes())
-
 	for {
-		tmp := make([]byte, 64)
-		_, err := c.Read(tmp)
-		if err != nil {
-			return
-		}
-		p := packet.NewPacketFromBytes(tmp)
-		p.PrintInfo()
-		p.PopBytes(8)
-		p.Pad()
-		nc.Write(p.Bytes())
+		f.Pad()
+		nc.Write(f.Bytes())
 
-		if p.Final() {
+		if f.Final() {
 			break
 		}
+
+		tmp := make([]byte, 512)
+		_, err := c.Read(tmp)
+		if err != nil {
+			nc.Close()
+			c.Close()
+			return
+		}
+		f = packet.NewPacketFromBytes(tmp)
+		f.PrintInfo()
+		f.PopBytes(8)
 	}
 
 	for {
-		tmp := make([]byte, 64)
+		tmp := make([]byte, 512)
 		_, err := nc.Read(tmp)
 		if err != nil {
+			nc.Close()
+			c.Close()
 			return
 		}
 		p := packet.NewPacketFromBytes(tmp)
@@ -185,7 +220,6 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 			break
 		}
 	}
-
 }
 
 func (h *Node) processAsk(c net.Conn, f *packet.Packet) {

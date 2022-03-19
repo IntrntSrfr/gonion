@@ -10,11 +10,13 @@ import (
 	"log"
 )
 
+// Packet represents a packet of information used by gonion. It supports layering of information for relaying
+// information to nodes. The layers also support encryption with both RSA and AES-256.
 type Packet struct {
 	data []byte
 }
 
-const MaxPacketSize = 64
+const MaxPacketSize = 512
 
 type Type int
 

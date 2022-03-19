@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/netip"
+	"os"
 
 	"github.com/intrntsrfr/gonion/client"
 	"github.com/intrntsrfr/gonion/packet"
@@ -97,7 +99,7 @@ func main() {
 	// read the response
 	resp := new(bytes.Buffer)
 	for {
-		tmp := make([]byte, 64)
+		tmp := make([]byte, packet.MaxPacketSize)
 		_, err := c.Read(tmp)
 		if err != nil {
 			if err == io.EOF {
@@ -107,12 +109,13 @@ func main() {
 		}
 		p := packet.NewPacketFromBytes(tmp)
 		p.PrintInfo()
-		resp.Write(tmp)
-		if p.Final() {
+		header := p.PopBytes(2)
+		length := int(binary.BigEndian.Uint16(p.PopBytes(2)))
+		resp.Write(p.Bytes()[:length])
+		if header[0]&1 == 1 {
 			break
 		}
 	}
 
-	fmt.Println(resp.String())
-
+	fmt.Fprintln(os.Stdout, resp.String())
 }
