@@ -1,8 +1,9 @@
 package directory
 
 import (
-	"github.com/intrntsrfr/gonion"
 	"net/http"
+
+	"github.com/intrntsrfr/gonion"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,6 +37,7 @@ func NewDirectory(r *gin.Engine) *Directory {
 }
 
 func (d *Directory) registerControllers() {
+	d.R.GET("/api/health", d.health)
 	d.R.GET("/api/nodes", d.getNodes)
 	d.R.POST("/api/nodes", d.addNode)
 }
@@ -55,6 +57,10 @@ func (d *Directory) addNode(c *gin.Context) {
 		Data: "node added",
 	})
 	d.Nodes = append(d.Nodes, &n)
+}
+
+func (d *Directory) health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 // test nodes every minute or so to keep them added to node list
