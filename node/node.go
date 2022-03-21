@@ -96,6 +96,12 @@ func (h *Node) Handle(c net.Conn) {
 		}
 
 		p := packet.NewPacketFromBytes(tmp)
+		p.PrintInfo()
+		p.Trim()
+		// decrypt one layer here
+		//key := "siggarett"
+
+		//p.AESDecrypt([]byte(key))
 
 		switch p.CurrentFrameType() {
 		case packet.DataPacket:
@@ -116,7 +122,7 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 	req := new(bytes.Buffer)
 
 	for {
-		f.PrintInfo()
+		//f.PrintInfo()
 		header := f.PopBytes(2)
 		length := int(binary.BigEndian.Uint16(f.PopBytes(2)))
 		fmt.Println(header, length)
@@ -138,28 +144,53 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 	httpreq := gonion.HTTPRequest{}
 	json.Unmarshal(req.Bytes(), &httpreq)
 
-	fmt.Println(httpreq)
+	fmt.Println("http request struct:", httpreq)
 
 	res, err := http.Get(fmt.Sprintf("%v://%v%v", httpreq.Scheme, httpreq.Host, httpreq.Path))
 	if err != nil {
-		c.Write(packet.NewPacket().AddDataFrame([]byte("fail army"), true).Bytes())
+		c.Write(packet.NewPacket().AddDataFrame([]byte(err.Error()), true).Pad().Bytes())
 		c.Close()
 		return
 	}
 	defer res.Body.Close()
+	/*
+		resp, err := io.ReadAll(res.Body)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		fmt.Println("response bytes:", resp)
+		fmt.Println("response string:", string(resp))
+	*/
 	log.Println("attempting to reply")
 	for {
-		part := make([]byte, 508)
-		n, err := res.Body.Read(part)
-		if err != nil && err != io.EOF {
-			c.Write(packet.NewPacket().AddDataFrame([]byte("fail army"), true).Bytes())
-			c.Close()
-			break
-		}
 		p := packet.NewPacket()
+		part := make([]byte, 508)
+		n, err := io.ReadFull(res.Body, part)
 		p.AddDataFrame(part[:n], n != 508)
+		if err != nil {
+			if err != io.ErrUnexpectedEOF {
+				c.Close()
+				return
+			}
+		}
+		/*
+			//n, err := res.Body.Read(part)
+			if err != nil {
+				fmt.Println(err)
+				if err != io.EOF {
+					c.Write(packet.NewPacket().AddDataFrame([]byte("fail army"), true).Pad().Bytes())
+					c.Close()
+					return
+				}
+			} */
+
+		//p := packet.NewPacket()
+		//p.AddDataFrame(part[:n], n != 508)
 		p.Pad()
-		p.PrintInfo()
+		//p.PrintInfo()
+		fmt.Println("sending reply packet...")
 		c.Write(p.Bytes())
 		if n != 508 {
 			break
@@ -169,7 +200,7 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 
 func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 	log.Println("this is a relay packet")
-	f.PrintInfo()
+	//f.PrintInfo()
 	f.PopBytes(2)
 
 	ipBytes := f.PopBytes(4)
@@ -194,27 +225,34 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 		}
 
 		tmp := make([]byte, 512)
-		_, err := c.Read(tmp)
+		_, err := io.ReadFull(c, tmp) // read exactly 512 bytes
+		//_, err := c.Read(tmp)
 		if err != nil {
+			// if anything goes wrong, close everything
 			nc.Close()
 			c.Close()
 			return
 		}
-		f = packet.NewPacketFromBytes(tmp)
-		f.PrintInfo()
-		f.PopBytes(8)
+		f = packet.NewPacketFromBytes(tmp) // put the incoming packet bytes into a packet struct
+		//f.PrintInfo()
+		f.PopBytes(8) // pop 8 to remove the header from incoming packets. there should be a check to see if its still the same packet type.
 	}
 
 	for {
+		fmt.Println("sending back...")
 		tmp := make([]byte, 512)
-		_, err := nc.Read(tmp)
+		_, err := io.ReadFull(nc, tmp) // read exactly 512 bytes again
 		if err != nil {
 			nc.Close()
 			c.Close()
 			return
 		}
 		p := packet.NewPacketFromBytes(tmp)
-		p.PrintInfo()
+		//p.PrintInfo()
+
+		// trim returning packet, then encrypt, then pad
+
+		p.Pad()
 		c.Write(p.Bytes())
 		if p.Final() {
 			break
