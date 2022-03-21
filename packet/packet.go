@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+
+	"github.com/tidwall/secret"
 )
 
 // Packet represents a packet of information used by gonion. It supports layering of information for relaying
@@ -50,8 +52,14 @@ func (p *Packet) Final() bool {
 	return p.data[0]&1 == 1
 }
 
-func (p *Packet) Pad() {
+func (p *Packet) Pad() *Packet {
 	p.data = append(p.data, make([]byte, MaxPacketSize-len(p.data))...)
+	return p
+}
+func (p *Packet) Trim() *Packet {
+	p.data = bytes.Trim(p.data, string([]byte{0x0}))
+	//p.data = append(p.data, make([]byte, MaxPacketSize-len(p.data))...)
+	return p
 }
 
 func (p *Packet) AddDataFrame(data []byte, final bool) *Packet {
@@ -105,14 +113,24 @@ func (p *Packet) PrintInfo() {
 	fmt.Println()
 }
 
+const key = "siggarett"
+
 // AESEncrypt AES encrypts the current bytearray with a provided key
 func (p *Packet) AESEncrypt(key []byte) {
-
+	enc, err := secret.Encrypt(string(key), p.data)
+	if err != nil {
+		panic(err)
+	}
+	p.data = enc
 }
 
 // AESDecrypt AES decrypts the current bytearray with a provided key
 func (p *Packet) AESDecrypt(key []byte) {
-
+	dec, err := secret.Decrypt(string(key), p.data)
+	if err != nil {
+		panic(dec)
+	}
+	p.data = dec
 }
 
 // RSAEncrypt RSA encrypts the current bytearray with a provided key
