@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -24,12 +25,20 @@ func closeConn(c net.Conn) {
 
 }
 
-const MaxContent = packet.MaxPacketSize - (NodeCount-1)*8 - 4
+//const MaxContent = packet.MaxPacketSize - (NodeCount-1)*8 - 4
+const MaxContent = 256
 const NodeCount = 3
 
 func main() {
 
-	a := "http://localhost:9051/api/nodes?weed=fart"
+	flag.Parse()
+	file := flag.Arg(0)
+	if file == "" {
+		fmt.Println("please specify an output file")
+		return
+	}
+
+	a := "https://www.vg.no/"
 	req := client.ParseRequest(a)
 
 	d, _ := json.Marshal(req)
@@ -63,6 +72,7 @@ func main() {
 		p.AddDataFrame(partialMsg[:n], n != MaxContent)
 
 		// packet should be encrypted here with node 3 key
+		//p.AESEncrypt([]byte("siggarett"))
 
 		// here we add the layers for the 2 other nodes
 
@@ -81,10 +91,11 @@ func main() {
 			p.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, n != MaxContent)
 
 			// it should be a layer of encryption here
+			//p.AESEncrypt([]byte("siggarett"))
 		}
 
 		p.Pad()
-		p.PrintInfo()
+		//p.PrintInfo()
 		_, err = c.Write(p.Bytes())
 		if err != nil {
 			log.Fatal(err)
@@ -94,11 +105,12 @@ func main() {
 		}
 	}
 
-	log.Println("i will now try to read a response")
+	fmt.Println("i will now try to read a response")
 
 	// read the response
 	resp := new(bytes.Buffer)
 	for {
+		fmt.Println("receiving packet...")
 		tmp := make([]byte, packet.MaxPacketSize)
 		_, err := c.Read(tmp)
 		if err != nil {
@@ -108,7 +120,7 @@ func main() {
 			log.Fatal(err)
 		}
 		p := packet.NewPacketFromBytes(tmp)
-		p.PrintInfo()
+		//p.PrintInfo()
 		header := p.PopBytes(2)
 		length := int(binary.BigEndian.Uint16(p.PopBytes(2)))
 		resp.Write(p.Bytes()[:length])
@@ -117,5 +129,9 @@ func main() {
 		}
 	}
 
-	fmt.Fprintln(os.Stdout, resp.String())
+	f, err := os.Create(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+	io.Copy(f, resp)
 }
