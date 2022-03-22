@@ -149,7 +149,13 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		p := packet.NewPacketFromBytes(tmp)
 		p.Trim()
 
+		//p.PrintInfo()
 		// we need to 3x decrypt here
+		for i := 0; i < 3; i++ {
+			p.AESDecrypt([]byte("siggarett"))
+		}
+
+		//p.PrintInfo()
 
 		header := p.PopBytes(2)
 		length := int(binary.BigEndian.Uint16(p.PopBytes(2)))

@@ -155,14 +155,14 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 		return
 	}
 	defer res.Body.Close()
-	
+
 	//log.Println("attempting to reply")
 	for {
 		//fmt.Println("reading response...")
 		p := packet.NewPacket()
-		part := make([]byte, 506) // we need to read 506, as 4 bytes will be for data header, and 2 bytes for padding
+		part := make([]byte, 256) // we need to read 506, as 4 bytes will be for data header, and 2 bytes for padding
 		n, err := io.ReadFull(res.Body, part)
-		p.AddDataFrame(part[:n], n != 506)
+		p.AddDataFrame(part[:n], n != 256)
 		if err != nil {
 			if err != io.ErrUnexpectedEOF {
 				c.Close()
@@ -182,11 +182,13 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 
 		//p := packet.NewPacket()
 		//p.AddDataFrame(part[:n], n != 508)
+		//p.PrintInfo()
+		p.AESEncrypt([]byte("siggarett"))
 		p.Pad()
 		//p.PrintInfo()
 		//fmt.Println("sending reply packet...")
 		c.Write(p.Bytes())
-		if n != 506 {
+		if n != 256 {
 			break
 		}
 	}
@@ -249,14 +251,18 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 		p := packet.NewPacketFromBytes(tmp)
 		//p.PrintInfo()
 		p.Trim()
+		//p.PrintInfo()
 
 		// trim returning packet, then encrypt, then pad
+		p.AESEncrypt([]byte("siggarett"))
 
 		p.Pad()
+		//p.PrintInfo()
 		c.Write(p.Bytes())
-		if p.Final() {
-			break
-		}
+		/*
+			if p.Final() {
+				break
+			} */
 	}
 }
 

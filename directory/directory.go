@@ -19,6 +19,7 @@ type SuccessResponse struct {
 // change handler to use a map of nodes instead, so that IPs can be used as key.
 // it will make it easier to ping and remove them when that is needed.
 
+// Directory represents a Node directory that tracks active Nodes.
 type Directory struct {
 	R     *gin.Engine
 	Nodes []*gonion.NodeInfo
