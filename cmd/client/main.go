@@ -2,40 +2,35 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"github.com/intrntsrfr/gonion/client"
 	"io"
 	"log"
 	"os"
-
-	"github.com/intrntsrfr/gonion/client"
 )
 
 func main() {
 
-
+	var method string
+	flag.StringVar(&method, "m", "GET", "HTTP method to use")
 	flag.Parse()
 
-	fmt.Println(flag.Args())
-
-	return
-	file := flag.Arg(0)
-	if file == "" {
-		fmt.Println("please specify an output file")
-		return
+	dst := flag.Arg(0)
+	if dst == ""{
+		log.Fatal("you need to specify a destination")
 	}
 
-	return
+	out := flag.Arg(1)
+	if out == "" {
+		log.Fatal("you need to specify a destination")
+	}
 
-	a := "http://eu.httpbin.org/flasgger_static/swagger-ui-bundle.js"
-	req := client.ParseURL(a)
-
+	req := client.ParseURL(dst)
 	resp := client.Do(req)
 
-	f, err := os.Create(file)
+	f, err := os.Create(out)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer f.Close()
-
 	io.Copy(f, resp)
 }
