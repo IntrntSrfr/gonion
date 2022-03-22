@@ -83,25 +83,19 @@ func (h *Node) Handle(c net.Conn) {
 	// read infinitely
 	for {
 		tmp := make([]byte, 512)
-		_, err := io.ReadFull(c, tmp)
+		_, err := io.ReadFull(c, tmp) // always read exactly 512 bytes, as this is equal to one packet. everything else is not interesting
 		if err != nil {
 			return
-			/*
-				if err != io.EOF {
-					log.Println(err)
-					return
-				}
-				continue
-			*/
 		}
 
 		p := packet.NewPacketFromBytes(tmp)
-		p.PrintInfo()
+		//p.PrintInfo()
 		p.Trim()
+		//p.PrintInfo()
 		// decrypt one layer here
-		//key := "siggarett"
-
-		//p.AESDecrypt([]byte(key))
+		key := "siggarett"
+		p.AESDecrypt([]byte(key))
+		//p.PrintInfo()
 
 		switch p.CurrentFrameType() {
 		case packet.DataPacket:
@@ -119,26 +113,34 @@ func (h *Node) Handle(c net.Conn) {
 func (h *Node) processData(c net.Conn, f *packet.Packet) {
 	log.Println("this is a data packet")
 
-	req := new(bytes.Buffer)
-
+	req := new(bytes.Buffer) // track incoming data, put it together after all data packets have been read
 	for {
-		//f.PrintInfo()
-		header := f.PopBytes(2)
-		length := int(binary.BigEndian.Uint16(f.PopBytes(2)))
-		fmt.Println(header, length)
+		f.PrintInfo()
+		header := f.PopBytes(2)                               // pop header bytes
+		length := int(binary.BigEndian.Uint16(f.PopBytes(2))) // pop the length bytes
 
-		req.Write(f.Bytes()[:length])
+		req.Write(f.Bytes()[:length]) // write the length of the packet to the buffer
 
 		if header[0]&0x1 == 1 {
+			// if header has FIN bit, break out
 			break
 		}
 
 		tmp := make([]byte, 512)
-		_, err := c.Read(tmp)
-		if err != nil {
-			return
-		}
+		_, err := io.ReadFull(c, tmp)
+		//n, err := c.Read(tmp)
 		f = packet.NewPacketFromBytes(tmp)
+
+		key := "siggarett"
+		f.AESDecrypt([]byte(key))
+		if err != nil {
+			if err != io.ErrUnexpectedEOF {
+				c.Close()
+				return
+			}
+		}
+		f.Trim()
+		//f = packet.NewPacketFromBytes(tmp)
 	}
 	fmt.Println(req.String())
 	httpreq := gonion.HTTPRequest{}
@@ -153,22 +155,14 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 		return
 	}
 	defer res.Body.Close()
-	/*
-		resp, err := io.ReadAll(res.Body)
-		if err != nil {
-			log.Fatal(err)
-			return
-		}
-
-		fmt.Println("response bytes:", resp)
-		fmt.Println("response string:", string(resp))
-	*/
-	log.Println("attempting to reply")
+	
+	//log.Println("attempting to reply")
 	for {
+		//fmt.Println("reading response...")
 		p := packet.NewPacket()
-		part := make([]byte, 508)
+		part := make([]byte, 506) // we need to read 506, as 4 bytes will be for data header, and 2 bytes for padding
 		n, err := io.ReadFull(res.Body, part)
-		p.AddDataFrame(part[:n], n != 508)
+		p.AddDataFrame(part[:n], n != 506)
 		if err != nil {
 			if err != io.ErrUnexpectedEOF {
 				c.Close()
@@ -190,9 +184,9 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 		//p.AddDataFrame(part[:n], n != 508)
 		p.Pad()
 		//p.PrintInfo()
-		fmt.Println("sending reply packet...")
+		//fmt.Println("sending reply packet...")
 		c.Write(p.Bytes())
-		if n != 508 {
+		if n != 506 {
 			break
 		}
 	}
@@ -216,30 +210,35 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 	}
 	defer closeConn(nc, "outgoing")
 
-	for {
-		f.Pad()
-		nc.Write(f.Bytes())
+	go func() {
+		for {
+			//f.PrintInfo()
+			f.Pad()
+			nc.Write(f.Bytes())
 
-		if f.Final() {
-			break
+			if f.Final() {
+				break
+			}
+
+			tmp := make([]byte, 512)
+			_, err := io.ReadFull(c, tmp) // read exactly 512 bytes
+			//_, err := c.Read(tmp)
+			if err != nil {
+				// if anything goes wrong, close everything
+				nc.Close()
+				c.Close()
+				return
+			}
+			f = packet.NewPacketFromBytes(tmp) // put the incoming packet bytes into a packet struct
+			f.Trim()
+			f.AESDecrypt([]byte("siggarett"))
+			//f.PrintInfo()
+			f.PopBytes(8) // pop 8 to remove the header from incoming packets. there should be a check to see if its still the same packet type.
 		}
-
-		tmp := make([]byte, 512)
-		_, err := io.ReadFull(c, tmp) // read exactly 512 bytes
-		//_, err := c.Read(tmp)
-		if err != nil {
-			// if anything goes wrong, close everything
-			nc.Close()
-			c.Close()
-			return
-		}
-		f = packet.NewPacketFromBytes(tmp) // put the incoming packet bytes into a packet struct
-		//f.PrintInfo()
-		f.PopBytes(8) // pop 8 to remove the header from incoming packets. there should be a check to see if its still the same packet type.
-	}
+	}()
 
 	for {
-		fmt.Println("sending back...")
+		//fmt.Println("sending back...")
 		tmp := make([]byte, 512)
 		_, err := io.ReadFull(nc, tmp) // read exactly 512 bytes again
 		if err != nil {
@@ -249,6 +248,7 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 		}
 		p := packet.NewPacketFromBytes(tmp)
 		//p.PrintInfo()
+		p.Trim()
 
 		// trim returning packet, then encrypt, then pad
 
@@ -264,7 +264,6 @@ func (h *Node) processAsk(c net.Conn, f *packet.Packet) {
 	log.Println("this is an ask packet")
 	f.PrintInfo()
 	f.PopBytes(2)
-
 }
 
 /*
