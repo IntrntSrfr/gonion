@@ -20,6 +20,7 @@ type Packet struct {
 
 const MaxPacketSize = 512
 
+// Type represents the type of data we are looking at
 type Type int
 
 const (
@@ -29,14 +30,17 @@ const (
 	AskPacket
 )
 
+// NewPacket creates a new packet with zero data
 func NewPacket() *Packet {
 	return &Packet{data: []byte{}}
 }
 
+// NewPacketFromBytes wraps existing data into a new Packet struct
 func NewPacketFromBytes(data []byte) *Packet {
 	return &Packet{data: data}
 }
 
+// CurrentFrameType returns the Type of the packet at the current top layer
 func (p *Packet) CurrentFrameType() Type {
 	if p.data[0]&0x80 == 0x80 {
 		return DataPacket
@@ -52,16 +56,26 @@ func (p *Packet) Final() bool {
 	return p.data[0]&1 == 1
 }
 
+// Pad pads the packet with null bytes up to MaxPacketLength - 2. The 2 final bytes tells how much padding
+//was added, such that Packet.Trim() might function properly.
 func (p *Packet) Pad() *Packet {
-	p.data = append(p.data, make([]byte, MaxPacketSize-len(p.data))...)
-	return p
-}
-func (p *Packet) Trim() *Packet {
-	p.data = bytes.Trim(p.data, string([]byte{0x0}))
-	//p.data = append(p.data, make([]byte, MaxPacketSize-len(p.data))...)
+	dst := make([]byte, MaxPacketSize)                           // make a new buffer
+	padAmt := MaxPacketSize - len(p.data) - 2                    // find how much we need to pad
+	copy(dst, p.data)                                            // copy the current data into the new buffer
+	binary.BigEndian.PutUint16(dst[len(dst)-2:], uint16(padAmt)) // set the final 2 bytes to the pad amount
+	p.data = dst
 	return p
 }
 
+// Trim trims the packet n bytes, where n is the 2 final bytes in the packet data.
+func (p *Packet) Trim() *Packet {
+	trimAmt := binary.BigEndian.Uint16(p.data[len(p.data)-2:])
+	p.data = p.data[:len(p.data)-int(trimAmt)-2]
+	return p
+}
+
+// AddDataFrame adds a data frame to a Packet. It will take some data, wrap it in a frame
+// that contains a DataPacket header, and the data length
 func (p *Packet) AddDataFrame(data []byte, final bool) *Packet {
 	p.data = append(data, p.data...)
 	size := make([]byte, 2)
