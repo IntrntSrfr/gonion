@@ -12,4 +12,5 @@ type HTTPRequest struct {
 	Host    string              `json:"host"`
 	Path    string              `json:"path"`
 	Queries map[string][]string `json:"queries"`
+	Headers map[string]string   `json:"headers"`
 }
