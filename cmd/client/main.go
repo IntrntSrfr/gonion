@@ -2,10 +2,10 @@ package main
 
 import (
 	"flag"
-	"github.com/intrntsrfr/gonion/client"
-	"io"
 	"log"
-	"os"
+
+	"github.com/intrntsrfr/gonion"
+	"github.com/intrntsrfr/gonion/client"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 	flag.Parse()
 
 	dst := flag.Arg(0)
-	if dst == ""{
+	if dst == "" {
 		log.Fatal("you need to specify a destination")
 	}
 
@@ -24,13 +24,17 @@ func main() {
 		log.Fatal("you need to specify a destination")
 	}
 
-	req := client.ParseURL(dst)
-	resp := client.Do(req)
+	req := gonion.ParseURL(dst)
+	client.Do(req)
+	/*
+		resp := client.Do(req)
 
-	f, err := os.Create(out)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	io.Copy(f, resp)
+		f, err := os.Create(out)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		io.Copy(f, resp)
+
+	*/
 }
