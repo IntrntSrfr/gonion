@@ -1,7 +1,6 @@
 package packet
 
 import (
-	"crypto/rsa"
 	"reflect"
 	"testing"
 )
@@ -226,42 +225,6 @@ func TestPacket_AESDecrypt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.p.AESDecrypt(tt.args.key)
-		})
-	}
-}
-
-func TestPacket_RSAEncrypt(t *testing.T) {
-	type args struct {
-		key *rsa.PublicKey
-	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.p.RSAEncrypt(tt.args.key)
-		})
-	}
-}
-
-func TestPacket_RSADecrypt(t *testing.T) {
-	type args struct {
-		key *rsa.PrivateKey
-	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.p.RSADecrypt(tt.args.key)
 		})
 	}
 }

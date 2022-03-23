@@ -80,6 +80,9 @@ func closeConn(c net.Conn, direction string) {
 func (h *Node) Handle(c net.Conn) {
 	defer closeConn(c, "incoming")
 
+	first := true
+	var secret []byte
+
 	// read infinitely
 	for {
 		tmp := make([]byte, 512)
@@ -91,17 +94,55 @@ func (h *Node) Handle(c net.Conn) {
 		p := packet.NewPacketFromBytes(tmp)
 		//p.PrintInfo()
 		p.Trim()
+
+		if first {
+			err = p.RSADecrypt(h.privKey)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			if p.CurrentFrameType() != packet.AskPacket {
+				return
+			}
+			fmt.Println("this is the decrypted packet")
+			p.PrintInfo()
+
+			// get the key from the packet, store it, then create and return a new key to the client
+			p.PopBytes(2)
+
+			ck := p.Bytes()
+
+			sk := make([]byte, 16)
+			rand.Read(sk)
+
+			skP := packet.NewPacket().AddDataFrame(sk, true)
+
+			combined := append(ck, sk...)
+
+			fmt.Println("SHARED KEY:", combined)
+
+			hashed := sha256.New()
+			hashed.Write(combined)
+			secret = hashed.Sum(nil)
+
+			fmt.Println("HASHED SHARED KEY:", secret)
+
+			c.Write(skP.Pad().Bytes())
+			first = false
+			continue
+		}
+
 		//p.PrintInfo()
 		// decrypt one layer here
-		key := "siggarett"
-		p.AESDecrypt([]byte(key))
+		//key := "siggarett"
+		p.AESDecrypt(secret)
 		//p.PrintInfo()
 
 		switch p.CurrentFrameType() {
 		case packet.DataPacket:
-			h.processData(c, p)
+			h.processData(c, p, secret)
 		case packet.RelayPacket:
-			h.processRelay(c, p)
+			h.processRelay(c, p, secret)
 		case packet.AskPacket:
 			h.processAsk(c, p)
 		default:
@@ -110,7 +151,7 @@ func (h *Node) Handle(c net.Conn) {
 	}
 }
 
-func (h *Node) processData(c net.Conn, f *packet.Packet) {
+func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 	log.Println("this is a data packet")
 
 	req := new(bytes.Buffer) // track incoming data, put it together after all data packets have been read
@@ -131,8 +172,8 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 		//n, err := c.Read(tmp)
 		f = packet.NewPacketFromBytes(tmp)
 
-		key := "siggarett"
-		f.AESDecrypt([]byte(key))
+		//key := "siggarett"
+		f.AESDecrypt(key)
 		if err != nil {
 			if err != io.ErrUnexpectedEOF {
 				c.Close()
@@ -142,6 +183,7 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 		f.Trim()
 		//f = packet.NewPacketFromBytes(tmp)
 	}
+
 	fmt.Println(req.String())
 	httpreq := gonion.HTTPRequest{}
 	json.Unmarshal(req.Bytes(), &httpreq)
@@ -183,7 +225,7 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 		//p := packet.NewPacket()
 		//p.AddDataFrame(part[:n], n != 508)
 		//p.PrintInfo()
-		p.AESEncrypt([]byte("siggarett"))
+		p.AESEncrypt(key)
 		p.Pad()
 		//p.PrintInfo()
 		//fmt.Println("sending reply packet...")
@@ -194,7 +236,7 @@ func (h *Node) processData(c net.Conn, f *packet.Packet) {
 	}
 }
 
-func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
+func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 	log.Println("this is a relay packet")
 	//f.PrintInfo()
 	f.PopBytes(2)
@@ -233,7 +275,7 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 			}
 			f = packet.NewPacketFromBytes(tmp) // put the incoming packet bytes into a packet struct
 			f.Trim()
-			f.AESDecrypt([]byte("siggarett"))
+			f.AESDecrypt(key)
 			//f.PrintInfo()
 			f.PopBytes(8) // pop 8 to remove the header from incoming packets. there should be a check to see if its still the same packet type.
 		}
@@ -254,7 +296,7 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet) {
 		//p.PrintInfo()
 
 		// trim returning packet, then encrypt, then pad
-		p.AESEncrypt([]byte("siggarett"))
+		p.AESEncrypt(key)
 
 		p.Pad()
 		//p.PrintInfo()
@@ -272,55 +314,6 @@ func (h *Node) processAsk(c net.Conn, f *packet.Packet) {
 	f.PopBytes(2)
 }
 
-/*
-func (h *Node) handle(c net.Conn) {
-	defer c.Close()
-
-	var clientSecret []byte
-
-	buf := make([]byte, 256)
-
-	n, err := c.Read(buf)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	log.Println("bytes read:", n)
-
-	// for any connection, we will first decrypt their message, get their secret and store it
-	decrypted, err := h.Decrypt(buf)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	fmt.Println(decrypted, len(decrypted))
-
-	// this should be 65
-	clientSecret = decrypted[1:66]
-	log.Println("client secret:", clientSecret)
-
-	nodeSecret := make([]byte, 8)
-	_, err = rand.Read(nodeSecret)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	log.Println("node secret:", nodeSecret)
-
-	var key []byte
-	key = append(key, clientSecret...)
-	key = append(key, nodeSecret...)
-
-	_, err = c.Write(nodeSecret)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-}
-*/
-
 // PublicKeyToBytes public key to bytes
 func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
 	pubASN1, err := x509.MarshalPKIXPublicKey(pub)
@@ -335,6 +328,23 @@ func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
 	})
 
 	return pubBytes, nil
+}
+
+// BytesToPublicKey bytes to public key
+func BytesToPublicKey(pub []byte) *rsa.PublicKey {
+	block, _ := pem.Decode(pub)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		log.Fatal("failed to decode public key PEM block")
+	}
+	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Fatal(err)
+	}
+	key, ok := ifc.(*rsa.PublicKey)
+	if !ok {
+		log.Fatal("not ok")
+	}
+	return key
 }
 
 func (h *Node) Encrypt(data []byte) ([]byte, error) {

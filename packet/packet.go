@@ -3,7 +3,9 @@ package packet
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -148,6 +150,21 @@ func (p *Packet) AESDecrypt(key []byte) {
 }
 
 // RSAEncrypt RSA encrypts the current bytearray with a provided key
+func (p *Packet) RSAEncrypt(pub *rsa.PublicKey) error {
+	enc, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, p.data, []byte(""))
+	p.data = enc
+	return err
+}
+
+// RSADecrypt DSA encrypts the current bytearray with a provided key
+func (p *Packet) RSADecrypt(priv *rsa.PrivateKey) error {
+	dec, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, p.data, []byte(""))
+	p.data = dec
+	return err
+}
+
+/*
+// RSAEncrypt RSA encrypts the current bytearray with a provided key
 func (p *Packet) RSAEncrypt(key *rsa.PublicKey) {
 
 }
@@ -156,6 +173,7 @@ func (p *Packet) RSAEncrypt(key *rsa.PublicKey) {
 func (p *Packet) RSADecrypt(key *rsa.PrivateKey) {
 
 }
+*/
 
 // Bytes returns the underlying bytearray
 func (p *Packet) Bytes() []byte {

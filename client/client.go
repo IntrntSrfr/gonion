@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 
 	"github.com/intrntsrfr/gonion"
 	"github.com/intrntsrfr/gonion/packet"
@@ -29,7 +28,8 @@ const DirURL = "http://localhost:9051/api/nodes"
 type Client struct {
 	directoryURL string
 	nodes        []*gonion.NodeInfo
-	secrets      []string
+	secrets      [][]byte
+	conn         net.Conn
 }
 
 func marshalRequest(req *gonion.HTTPRequest) []byte {
@@ -38,6 +38,19 @@ func marshalRequest(req *gonion.HTTPRequest) []byte {
 		log.Fatal(err)
 	}
 	return d
+}
+
+// connect takes in a node and attempts to connect the Client to it.
+func (cli *Client) connect(node *gonion.NodeInfo) {
+	c, err := net.Dial("tcp", fmt.Sprintf("%v:%v", node.IP, node.Port))
+	if err != nil {
+		log.Fatal(err)
+	}
+	cli.conn = c
+}
+
+func (cli *Client) closeConnection() {
+	cli.conn.Close()
 }
 
 func (cli *Client) getNodes() []*gonion.NodeInfo {
@@ -60,9 +73,98 @@ func (cli *Client) getNodes() []*gonion.NodeInfo {
 	cli.nodes = nodes
 	return nodes
 }
+
 func Do(req *gonion.HTTPRequest) *bytes.Buffer {
 	c := &Client{directoryURL: DirURL}
 	return c.do(req)
+}
+
+func (cli *Client) exchangeSecrets() {
+	fmt.Println("attempting node handshakes...")
+
+	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[0]))
+	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[1], cli.nodes[0]))
+	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[2], cli.nodes[1], cli.nodes[0]))
+
+	fmt.Println("completed all handshakes")
+
+}
+
+func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeInfo) []byte {
+	fmt.Println(fmt.Sprintf("starting handshake with %v relay(s)", len(relays)))
+
+	pub := BytesToPublicKey(node.PublicKey)
+	askP := packet.NewPacket()
+
+	// make first half of key
+	ck := make([]byte, 16)
+	rand.Read(ck)
+
+	fmt.Println(ck)
+
+	askP.AddAskFrame(ck, true)
+	askP.PrintInfo()
+
+	err := askP.RSAEncrypt(pub)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	//fmt.Println("this is the input")
+	//askP.PrintInfo()
+	//askP.Pad()
+
+	for i := range relays {
+		fmt.Println("adding AES encryption layer...")
+
+		node := relays[i]
+		ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
+		if err != nil {
+			log.Fatal(err)
+		}
+		nodeIP := ap.Addr().As4()
+		nodePort := ap.Port()
+		askP.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, true)
+
+		askP.AESEncrypt(cli.secrets[i])
+	}
+	askP.Pad()
+
+	askP.PrintInfo()
+
+	// send ask packet
+	fmt.Println("sending secret to node...")
+	cli.conn.Write(askP.Bytes())
+
+	fmt.Println("trying to read secret from node...")
+	res := make([]byte, 512)
+	_, err = io.ReadFull(cli.conn, res)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	skP := packet.NewPacketFromBytes(res)
+	skP.Trim()
+
+	for i := range relays {
+		skP.AESDecrypt(cli.secrets[i])
+	}
+
+	skP.PrintInfo()
+
+	skP.PopBytes(4)
+
+	sk := skP.Bytes()
+
+	sharedKey := append(ck, sk...)
+	fmt.Println("SHARED KEY:", sharedKey)
+	hashed := sha256.New()
+	hashed.Write(sharedKey)
+	secret := hashed.Sum(nil)
+	fmt.Println("HASHED SHARED KEY:", secret)
+
+	fmt.Println("completed handshake")
+	return secret
 }
 
 func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
@@ -76,22 +178,22 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		log.Fatal("too few nodes")
 	}
 
-	node1 := nodes[0]
-	// dont need a layer for node 1 as its directly connected
-	c, err := net.Dial("tcp", fmt.Sprintf("%v:%v", node1.IP, node1.Port))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer closeConn(c)
+	cli.connect(nodes[0])
+	defer cli.closeConnection()
 
 	// before sending request, we need to get secrets from each node
+
+	cli.exchangeSecrets()
+
+	return nil
 
 	// partition the body into sizes we want to manage
 	// send each packet separately to the next node
 	for {
 		partialMsg := make([]byte, MaxContent)
-		n, err := inner.Read(partialMsg)
-		if err != nil && err != io.EOF {
+		n, err := io.ReadFull(inner, partialMsg)
+		//n, err := inner.Read(partialMsg)
+		if err != nil && err != io.ErrUnexpectedEOF {
 			log.Fatal(err)
 		}
 		p := packet.NewPacket()
@@ -120,7 +222,7 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		}
 
 		p.Pad()
-		_, err = c.Write(p.Bytes())
+		_, err = cli.conn.Write(p.Bytes())
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -137,13 +239,10 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		fmt.Println("receiving packet...")
 		tmp := make([]byte, packet.MaxPacketSize)
 		fmt.Println("read 1")
-		_, err := c.Read(tmp)
+		_, err := io.ReadFull(cli.conn, tmp)
+		//_, err := c.Read(tmp)
 		fmt.Println("read 2")
 		if err != nil {
-			fmt.Println(err)
-			if err == io.EOF {
-				break
-			}
 			log.Fatal(err)
 		}
 		p := packet.NewPacketFromBytes(tmp)
@@ -180,20 +279,6 @@ func closeConn(c net.Conn) {
 
 func (c *Client) GetSecret() {
 
-}
-
-func ParseURL(inp string) *gonion.HTTPRequest {
-	u, err := url.Parse(inp)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return &gonion.HTTPRequest{
-		Method:  "GET",
-		Scheme:  u.Scheme,
-		Host:    u.Host,
-		Path:    u.Path,
-		Queries: u.Query(),
-	}
 }
 
 /*
@@ -243,7 +328,8 @@ func Decrypt(data []byte, priv *rsa.PrivateKey) ([]byte, error) {
 // BytesToPublicKey bytes to public key
 func BytesToPublicKey(pub []byte) *rsa.PublicKey {
 	block, _ := pem.Decode(pub)
-	if block == nil || block.Type != "PUBLIC KEY" {
+	if block == nil || block.Type != "RSA PUBLIC KEY" {
+		panic("failed lol")
 		log.Fatal("failed to decode public key PEM block")
 	}
 	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)
