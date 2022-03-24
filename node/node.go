@@ -21,9 +21,10 @@ import (
 )
 
 type Node struct {
-	listener net.Listener
-	privKey  *rsa.PrivateKey
-	pubKey   *rsa.PublicKey
+	listener    net.Listener
+	privKey     *rsa.PrivateKey
+	pubKey      *rsa.PublicKey
+	connections map[string]net.Conn
 }
 
 func (h *Node) GenerateKeypair() {
@@ -128,6 +129,7 @@ func (h *Node) Handle(c net.Conn) {
 			fmt.Println("HASHED SHARED KEY:", secret)
 
 			c.Write(skP.Pad().Bytes())
+			fmt.Println("SENT KEY BACK TO CLIENT")
 			first = false
 			continue
 		}
@@ -236,6 +238,27 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 	}
 }
 
+// getConnection returns a net.Conn to a given address. If one does not exist, a new is created
+func (h *Node) getConnection(ip, port string) (net.Conn, error) {
+	cStr := fmt.Sprint("%v:%v", ip, port)
+	if c, ok := h.connections[cStr]; ok {
+		return c, nil
+	}
+
+	// dial next node
+	c, err := net.Dial("tcp", fmt.Sprintf("%v:%v", ip, port))
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	return c, nil
+}
+
+// closeConnection closes and removes a connection from the pool
+func (h *Node) closeConnection() {
+
+}
+
 func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 	log.Println("this is a relay packet")
 	//f.PrintInfo()
@@ -246,13 +269,11 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 	ip := net.IP{ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3]}
 	port := strconv.Itoa(int(binary.BigEndian.Uint16(portBytes)))
 
-	// dial next node
-	nc, err := net.Dial("tcp", fmt.Sprint(ip.To4().String(), ":", port))
+	nc, err := h.getConnection(ip.To4().String(), port)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	defer closeConn(nc, "outgoing")
 
 	go func() {
 		for {

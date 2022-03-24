@@ -83,8 +83,8 @@ func (cli *Client) exchangeSecrets() {
 	fmt.Println("attempting node handshakes...")
 
 	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[0]))
-	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[1], cli.nodes[0]))
-	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[2], cli.nodes[1], cli.nodes[0]))
+	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[1], cli.nodes[1]))
+	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[2], cli.nodes[2], cli.nodes[1]))
 
 	fmt.Println("completed all handshakes")
 
