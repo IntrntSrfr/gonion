@@ -20,6 +20,7 @@ import (
 	"github.com/intrntsrfr/gonion/packet"
 )
 
+// Node represents a node in the gonion-network, it allows users to connect to it and relay data, ask it for requests, or exchange keys
 type Node struct {
 	listener    net.Listener
 	privKey     *rsa.PrivateKey
@@ -81,7 +82,7 @@ func closeConn(c net.Conn, direction string) {
 func (h *Node) Handle(c net.Conn) {
 	defer closeConn(c, "incoming")
 
-	first := true
+	first := true // if it is the first connection, we do an RSA decryption check
 	var secret []byte
 	// read infinitely
 	for {
@@ -91,13 +92,10 @@ func (h *Node) Handle(c net.Conn) {
 			fmt.Println(err)
 			return
 		}
-		fmt.Println("new packet arrived")
 
 		p := packet.NewPacketFromBytes(tmp)
-		//p.PrintInfo()
 		p.Trim()
 		if first {
-			fmt.Println("this is the first packet")
 			err = p.RSADecrypt(h.privKey)
 			if err != nil {
 				log.Println(err)
@@ -106,8 +104,6 @@ func (h *Node) Handle(c net.Conn) {
 			if p.CurrentFrameType() != packet.AskPacket {
 				return
 			}
-			fmt.Println("this is the decrypted packet")
-			p.PrintInfo()
 
 			// get the key from the packet, store it, then create and return a new key to the client
 			p.PopBytes(2)
@@ -121,26 +117,16 @@ func (h *Node) Handle(c net.Conn) {
 
 			combined := append(ck, sk...)
 
-			fmt.Println("SHARED KEY:", combined)
-
 			hashed := sha256.New()
 			hashed.Write(combined)
 			secret = hashed.Sum(nil)
 
-			fmt.Println("HASHED SHARED KEY:", secret)
-
 			c.Write(skP.Pad().Bytes())
-			fmt.Println("SENT KEY BACK TO CLIENT")
 			first = false
 			continue
 		}
 
-		fmt.Println("this is not the first packet")
-		//p.PrintInfo()
-		// decrypt one layer here
-		//key := "siggarett"
 		p.AESDecrypt(secret)
-		//p.PrintInfo()
 
 		switch p.CurrentFrameType() {
 		case packet.DataPacket:
@@ -262,10 +248,7 @@ func (h *Node) closeConnection() {
 }
 
 func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
-	log.Println("this is a relay packet")
-	//f.PrintInfo()
-	f.PopBytes(2)
-
+	f.PopBytes(2) // pop header
 	ipBytes := f.PopBytes(4)
 	portBytes := f.PopBytes(2)
 	ip := net.IP{ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3]}
@@ -279,59 +262,39 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 
 	go func() {
 		for {
-			f.PrintInfo()
 			f.Pad()
 			nc.Write(f.Bytes())
-			/*
-				if f.Final() {
-					break
-				}
-			*/
 			tmp := make([]byte, 512)
 			_, err := io.ReadFull(c, tmp) // read exactly 512 bytes
-			//_, err := c.Read(tmp)
 			if err != nil {
 				// if anything goes wrong, close everything
-				fmt.Println("i am going  to close now!!!! ! ! ! ! ! !!")
-				nc.Close()
-				c.Close()
+				closeConn(nc, "outgoing")
+				closeConn(c, "incoming")
 				return
 			}
 			f = packet.NewPacketFromBytes(tmp) // put the incoming packet bytes into a packet struct
-			fmt.Println("new packet has arrived...")
 			f.Trim()
 			f.AESDecrypt(key)
-			//f.PrintInfo()
 			f.PopBytes(8) // pop 8 to remove the header from incoming packets. there should be a check to see if its still the same packet type.
 		}
 	}()
 
 	for {
-		fmt.Println("sending back...")
 		tmp := make([]byte, 512)
 		_, err := io.ReadFull(nc, tmp) // read exactly 512 bytes again
 		if err != nil {
 			closeConn(nc, "outgoing")
 			closeConn(c, "incoming")
-			//nc.Close()
-			//c.Close()
 			return
 		}
 		p := packet.NewPacketFromBytes(tmp)
-		//p.PrintInfo()
 		p.Trim()
-		//p.PrintInfo()
 
 		// trim returning packet, then encrypt, then pad
 		p.AESEncrypt(key)
 
 		p.Pad()
-		//p.PrintInfo()
 		c.Write(p.Bytes())
-		fmt.Println("sent back")
-		/*if p.Final() {
-			break
-		}*/
 	}
 }
 
