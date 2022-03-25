@@ -83,20 +83,21 @@ func (h *Node) Handle(c net.Conn) {
 
 	first := true
 	var secret []byte
-
 	// read infinitely
 	for {
 		tmp := make([]byte, 512)
 		_, err := io.ReadFull(c, tmp) // always read exactly 512 bytes, as this is equal to one packet. everything else is not interesting
 		if err != nil {
+			fmt.Println(err)
 			return
 		}
+		fmt.Println("new packet arrived")
 
 		p := packet.NewPacketFromBytes(tmp)
 		//p.PrintInfo()
 		p.Trim()
-
 		if first {
+			fmt.Println("this is the first packet")
 			err = p.RSADecrypt(h.privKey)
 			if err != nil {
 				log.Println(err)
@@ -134,6 +135,7 @@ func (h *Node) Handle(c net.Conn) {
 			continue
 		}
 
+		fmt.Println("this is not the first packet")
 		//p.PrintInfo()
 		// decrypt one layer here
 		//key := "siggarett"
@@ -240,7 +242,7 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 
 // getConnection returns a net.Conn to a given address. If one does not exist, a new is created
 func (h *Node) getConnection(ip, port string) (net.Conn, error) {
-	cStr := fmt.Sprint("%v:%v", ip, port)
+	cStr := fmt.Sprintf("%v:%v", ip, port)
 	if c, ok := h.connections[cStr]; ok {
 		return c, nil
 	}
@@ -277,7 +279,7 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 
 	go func() {
 		for {
-			//f.PrintInfo()
+			f.PrintInfo()
 			f.Pad()
 			nc.Write(f.Bytes())
 
@@ -295,6 +297,7 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 				return
 			}
 			f = packet.NewPacketFromBytes(tmp) // put the incoming packet bytes into a packet struct
+			fmt.Println("new packet has arrived...")
 			f.Trim()
 			f.AESDecrypt(key)
 			//f.PrintInfo()
@@ -303,12 +306,14 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 	}()
 
 	for {
-		//fmt.Println("sending back...")
+		fmt.Println("sending back...")
 		tmp := make([]byte, 512)
 		_, err := io.ReadFull(nc, tmp) // read exactly 512 bytes again
 		if err != nil {
-			nc.Close()
-			c.Close()
+			closeConn(nc, "outgoing")
+			closeConn(c, "incoming")
+			//nc.Close()
+			//c.Close()
 			return
 		}
 		p := packet.NewPacketFromBytes(tmp)
@@ -322,10 +327,10 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 		p.Pad()
 		//p.PrintInfo()
 		c.Write(p.Bytes())
-		/*
-			if p.Final() {
-				break
-			} */
+		fmt.Println("sent back")
+		/*if p.Final() {
+			break
+		}*/
 	}
 }
 
@@ -354,7 +359,7 @@ func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
 // BytesToPublicKey bytes to public key
 func BytesToPublicKey(pub []byte) *rsa.PublicKey {
 	block, _ := pem.Decode(pub)
-	if block == nil || block.Type != "PUBLIC KEY" {
+	if block == nil || block.Type != "RSA PUBLIC KEY" {
 		log.Fatal("failed to decode public key PEM block")
 	}
 	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)

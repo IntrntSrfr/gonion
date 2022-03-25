@@ -32,6 +32,11 @@ type Client struct {
 	conn         net.Conn
 }
 
+type NodeSecret struct {
+	node   *gonion.NodeInfo
+	secret []byte
+}
+
 func marshalRequest(req *gonion.HTTPRequest) []byte {
 	d, err := json.Marshal(req)
 	if err != nil {
@@ -103,7 +108,7 @@ func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeI
 	fmt.Println(ck)
 
 	askP.AddAskFrame(ck, true)
-	askP.PrintInfo()
+	//askP.PrintInfo()
 
 	err := askP.RSAEncrypt(pub)
 	if err != nil {
@@ -115,7 +120,7 @@ func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeI
 	//askP.Pad()
 
 	for i := range relays {
-		fmt.Println("adding AES encryption layer...")
+		fmt.Println(fmt.Sprintf("adding AES encryption layer for port %v...", relays[i].Port))
 
 		node := relays[i]
 		ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
@@ -126,11 +131,14 @@ func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeI
 		nodePort := ap.Port()
 		askP.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, true)
 
-		askP.AESEncrypt(cli.secrets[i])
+		fmt.Println("this layer has the following AES key:")
+		fmt.Println(cli.secrets[len(cli.secrets)-i-1])
+		fmt.Println("")
+		askP.AESEncrypt(cli.secrets[len(cli.secrets)-i-1])
 	}
 	askP.Pad()
 
-	askP.PrintInfo()
+	//askP.PrintInfo()
 
 	// send ask packet
 	fmt.Println("sending secret to node...")
@@ -150,7 +158,7 @@ func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeI
 		skP.AESDecrypt(cli.secrets[i])
 	}
 
-	skP.PrintInfo()
+	//skP.PrintInfo()
 
 	skP.PopBytes(4)
 
@@ -164,6 +172,7 @@ func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeI
 	fmt.Println("HASHED SHARED KEY:", secret)
 
 	fmt.Println("completed handshake")
+	fmt.Println("")
 	return secret
 }
 
@@ -182,10 +191,7 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 	defer cli.closeConnection()
 
 	// before sending request, we need to get secrets from each node
-
 	cli.exchangeSecrets()
-
-	return nil
 
 	// partition the body into sizes we want to manage
 	// send each packet separately to the next node
@@ -202,13 +208,17 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		//p.PrintInfo()
 
 		// packet should be encrypted here with node 3 key
-		p.AESEncrypt([]byte("siggarett"))
+		p.AESEncrypt(cli.secrets[len(cli.secrets)-1])
 
 		// here we add the layers for the 2 other nodes
 
 		// add 2x relay header
 		for i := 2; i > 0; i-- {
-			node := nodes[i]
+			fmt.Println(i - 1)
+			fmt.Println(fmt.Sprintf("adding AES layer for node with port %v with the following key", nodes[i-1].Port))
+			fmt.Println(cli.secrets[i-1])
+			fmt.Println("")
+			node := nodes[i-1]
 			ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
 			if err != nil {
 				log.Fatal(err)
@@ -218,10 +228,11 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 			p.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, n != MaxContent)
 
 			// it should be a layer of encryption here
-			p.AESEncrypt([]byte("siggarett"))
+			p.AESEncrypt(cli.secrets[i-1])
 		}
 
 		p.Pad()
+		fmt.Println("writing request...")
 		_, err = cli.conn.Write(p.Bytes())
 		if err != nil {
 			log.Fatal(err)
@@ -248,7 +259,7 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		p := packet.NewPacketFromBytes(tmp)
 		p.Trim()
 
-		//p.PrintInfo()
+		p.PrintInfo()
 		// we need to 3x decrypt here
 		for i := 0; i < 3; i++ {
 			p.AESDecrypt([]byte("siggarett"))
@@ -259,11 +270,12 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		header := p.PopBytes(2)
 		length := int(binary.BigEndian.Uint16(p.PopBytes(2)))
 		resp.Write(p.Bytes()[:length])
-		//io.Copy(f, bytes.NewBuffer(p.Bytes()[:length]))
 		if header[0]&1 == 1 {
 			break
 		}
 	}
+
+	fmt.Println(resp.Len())
 
 	return resp
 }
