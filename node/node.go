@@ -282,16 +282,17 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 			f.PrintInfo()
 			f.Pad()
 			nc.Write(f.Bytes())
-
-			if f.Final() {
-				break
-			}
-
+			/*
+				if f.Final() {
+					break
+				}
+			*/
 			tmp := make([]byte, 512)
 			_, err := io.ReadFull(c, tmp) // read exactly 512 bytes
 			//_, err := c.Read(tmp)
 			if err != nil {
 				// if anything goes wrong, close everything
+				fmt.Println("i am going  to close now!!!! ! ! ! ! ! !!")
 				nc.Close()
 				c.Close()
 				return

@@ -262,7 +262,7 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		p.PrintInfo()
 		// we need to 3x decrypt here
 		for i := 0; i < 3; i++ {
-			p.AESDecrypt([]byte("siggarett"))
+			p.AESDecrypt(cli.secrets[i])
 		}
 
 		//p.PrintInfo()
@@ -289,45 +289,6 @@ func closeConn(c net.Conn) {
 
 }
 
-func (c *Client) GetSecret() {
-
-}
-
-/*
-func main() {
-
-	// first we must get the nodes and their public keys
-
-	res, err := http.DefaultClient.Get("http://localhost:9051/api/nodes")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer res.Body.Close()
-
-	var nodes []*Node
-	err = json.NewDecoder(res.Body).Decode(&nodes)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	node := nodes[0]
-
-	pubKey := BytesToPublicKey(node.PublicKey)
-
-	key := make([]byte, 8)
-	_, err = rand.Read(key)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("client key:", key)
-	encrypted, err := Encrypt(key, pubKey)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-}
-*/
 
 func Encrypt(data []byte, pub *rsa.PublicKey) ([]byte, error) {
 	return rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, data, []byte(""))
