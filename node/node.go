@@ -159,10 +159,8 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 
 		tmp := make([]byte, 512)
 		_, err := io.ReadFull(c, tmp)
-		//n, err := c.Read(tmp)
 		f = packet.NewPacketFromBytes(tmp)
 
-		//key := "siggarett"
 		f.AESDecrypt(key)
 		if err != nil {
 			if err != io.ErrUnexpectedEOF {
@@ -201,24 +199,8 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 				return
 			}
 		}
-		/*
-			//n, err := res.Body.Read(part)
-			if err != nil {
-				fmt.Println(err)
-				if err != io.EOF {
-					c.Write(packet.NewPacket().AddDataFrame([]byte("fail army"), true).Pad().Bytes())
-					c.Close()
-					return
-				}
-			} */
-
-		//p := packet.NewPacket()
-		//p.AddDataFrame(part[:n], n != 508)
-		//p.PrintInfo()
 		p.AESEncrypt(key)
 		p.Pad()
-		//p.PrintInfo()
-		//fmt.Println("sending reply packet...")
 		c.Write(p.Bytes())
 		if n != 256 {
 			break
