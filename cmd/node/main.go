@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/intrntsrfr/gonion"
-	"github.com/intrntsrfr/gonion/node"
 	"log"
 	"net"
 	"net/http"
+
+	"github.com/intrntsrfr/gonion"
+	"github.com/intrntsrfr/gonion/node"
 )
 
 func main() {
@@ -18,10 +19,12 @@ func main() {
 	fmt.Scan(&p)
 	fmt.Println()
 
+	// get the outbound IP for the node, can probably be changed to an environment variable
 	localIP := GetOutIP()
 	host, _, _ := net.SplitHostPort(localIP)
 	fmt.Println("local ip:", host)
 
+	// create new node and generate keypairs
 	h := new(node.Node)
 	h.GenerateKeypair()
 
@@ -38,6 +41,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// if OK is not returned, something went wrong and the program will exit
 	if res.StatusCode != http.StatusOK {
 		log.Fatal("unable to join the node network")
 	}
@@ -49,6 +53,7 @@ func main() {
 	h.Listen()
 }
 
+// GetOutIP gets the outbound local IP
 func GetOutIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {

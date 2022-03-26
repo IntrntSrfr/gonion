@@ -1,7 +1,7 @@
 package gonion
 
 import (
-	"log"
+	"net/http"
 	"net/url"
 )
 
@@ -20,10 +20,10 @@ type HTTPRequest struct {
 	Headers map[string]string   `json:"headers"`
 }
 
-func ParseURL(inp string) *HTTPRequest {
+func ParseRequest(inp string) (*HTTPRequest, error) {
 	u, err := url.Parse(inp)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	return &HTTPRequest{
 		Method:  "GET",
@@ -31,5 +31,12 @@ func ParseURL(inp string) *HTTPRequest {
 		Host:    u.Host,
 		Path:    u.Path,
 		Queries: u.Query(),
+	}, nil
+}
+
+func validHTTPMethod(m string) bool {
+	if m == http.MethodGet || m == http.MethodPost || m == http.MethodPut || m == http.MethodPatch || m == http.MethodDelete || m == http.MethodHead {
+		return true
 	}
+	return false
 }
