@@ -5,10 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -22,46 +20,82 @@ import (
 
 // Node represents a node in the gonion-network, it allows users to connect to it and relay data, ask it for requests, or exchange keys
 type Node struct {
-	listener    net.Listener
 	privKey     *rsa.PrivateKey
 	pubKey      *rsa.PublicKey
 	connections map[string]net.Conn
 }
 
-func (h *Node) GenerateKeypair() {
-
-	// a node must first create its keypair
+// GenerateKeypair generates an RSA keypair and stores them in the *Node
+func (h *Node) GenerateKeypair() error {
 	bitSize := 2048
 	private, err := rsa.GenerateKey(rand.Reader, bitSize)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+
 	h.privKey = private
 	h.pubKey = &private.PublicKey
+	return nil
 }
 
+// PubKeyBytes returns a byte representation of the node public key
 func (h *Node) PubKeyBytes() []byte {
-	encPub, err := PublicKeyToBytes(h.pubKey)
+	encPub, err := gonion.PublicKeyToBytes(h.pubKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 	return encPub
 }
 
-func (h *Node) StartListenAtPort(port string) {
-
-	// start listening for connections
-	ln, err := net.Listen("tcp", fmt.Sprint(":", port))
-	if err != nil {
-		log.Fatal(err)
+func (h *Node) JoinNetwork(host, port string) error {
+	n := &gonion.NodeInfo{
+		IP:        host,
+		Port:      port,
+		PublicKey: h.PubKeyBytes(),
 	}
-	h.listener = ln
+	d, err := json.MarshalIndent(n, "", "\t")
+	if err != nil {
+		return err
+	}
+
+	// the node can then add itself to the node directory
+	res, err := http.Post(gonion.EndpointNodes, "application/json", bytes.NewBuffer(d))
+	if err != nil {
+		return err
+	}
+
+	// if OK is not returned, something went wrong and the program will exit
+	if res.StatusCode != http.StatusOK {
+		log.Fatal("unable to join the node network")
+	}
+
+	return nil
 }
 
-func (h *Node) Listen() {
-	log.Println("listening for requests;", h.listener.Addr())
+// Run will connect the node to the node network, then start accepting incoming connections and handling them
+func (h *Node) Run(host, port string) error {
+	err := h.GenerateKeypair()
+	if err != nil {
+		return err
+	}
+
+	err = h.JoinNetwork(host, port)
+	if err != nil {
+		return err
+	}
+
+	return h.StartListen(port)
+}
+
+func (h *Node) StartListen(port string) error {
+	// start listening for connections at port
+	ln, err := net.Listen("tcp", fmt.Sprint(":", port))
+	if err != nil {
+		return err
+	}
+	log.Println("started listener at:", ln.Addr())
 	for {
-		c, err := h.listener.Accept()
+		c, err := ln.Accept()
 		if err != nil {
 			log.Println(err)
 			continue
@@ -79,11 +113,29 @@ func closeConn(c net.Conn, direction string) {
 	log.Println(fmt.Sprint("closed ", direction, " connection"))
 }
 
+func (h *Node) createSecret(cs []byte) ([]byte, []byte, error) {
+	// create the node secret
+	ns := make([]byte, 16)
+	_, err := rand.Read(ns)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// combine client and node secret, then hash together to complete the AES key
+	combined := append(cs, ns...)
+	hashed := sha256.New()
+	hashed.Write(combined)
+	secret := hashed.Sum(nil)
+
+	return secret, ns, nil
+}
+
 func (h *Node) Handle(c net.Conn) {
 	defer closeConn(c, "incoming")
 
 	first := true // if it is the first connection, we do an RSA decryption check
 	var secret []byte
+
 	// read infinitely
 	for {
 		tmp := make([]byte, 512)
@@ -95,12 +147,16 @@ func (h *Node) Handle(c net.Conn) {
 
 		p := packet.NewPacketFromBytes(tmp)
 		p.Trim()
+
+		// if its the first packet to arrive, we want to RSA decrypt it and to a key exchange
 		if first {
 			err = p.RSADecrypt(h.privKey)
 			if err != nil {
 				log.Println(err)
 				return
 			}
+
+			// if its not an ask packet, we dont care
 			if p.CurrentFrameType() != packet.AskPacket {
 				return
 			}
@@ -108,24 +164,28 @@ func (h *Node) Handle(c net.Conn) {
 			// get the key from the packet, store it, then create and return a new key to the client
 			p.PopBytes(2)
 
-			ck := p.Bytes()
+			// get a combined secret and node secret
+			s, ns, err := h.createSecret(p.Bytes())
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			secret = s
 
-			sk := make([]byte, 16)
-			rand.Read(sk)
+			// send the node secret back to client
+			skP := packet.NewPacket().AddDataFrame(ns, true)
+			_, err = c.Write(skP.Pad().Bytes())
+			if err != nil {
+				log.Println(err)
+				return
+			}
 
-			skP := packet.NewPacket().AddDataFrame(sk, true)
-
-			combined := append(ck, sk...)
-
-			hashed := sha256.New()
-			hashed.Write(combined)
-			secret = hashed.Sum(nil)
-
-			c.Write(skP.Pad().Bytes())
+			// we only want to use RSA for the first packet
 			first = false
 			continue
 		}
 
+		// AES decrypt using the AES key
 		p.AESDecrypt(secret)
 
 		switch p.CurrentFrameType() {
@@ -133,8 +193,6 @@ func (h *Node) Handle(c net.Conn) {
 			h.processData(c, p, secret)
 		case packet.RelayPacket:
 			h.processRelay(c, p, secret)
-		case packet.AskPacket:
-			h.processAsk(c, p)
 		default:
 			continue
 		}
@@ -146,7 +204,6 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 
 	req := new(bytes.Buffer) // track incoming data, put it together after all data packets have been read
 	for {
-		f.PrintInfo()
 		header := f.PopBytes(2)                               // pop header bytes
 		length := int(binary.BigEndian.Uint16(f.PopBytes(2))) // pop the length bytes
 
@@ -169,14 +226,13 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 			}
 		}
 		f.Trim()
-		//f = packet.NewPacketFromBytes(tmp)
 	}
 
-	fmt.Println(req.String())
+	//fmt.Println(req.String())
 	httpreq := gonion.HTTPRequest{}
 	json.Unmarshal(req.Bytes(), &httpreq)
 
-	fmt.Println("http request struct:", httpreq)
+	//fmt.Println("http request struct:", httpreq)
 
 	res, err := http.Get(fmt.Sprintf("%v://%v%v", httpreq.Scheme, httpreq.Host, httpreq.Path))
 	if err != nil {
@@ -186,11 +242,9 @@ func (h *Node) processData(c net.Conn, f *packet.Packet, key []byte) {
 	}
 	defer res.Body.Close()
 
-	//log.Println("attempting to reply")
 	for {
-		//fmt.Println("reading response...")
 		p := packet.NewPacket()
-		part := make([]byte, 256) // we need to read 506, as 4 bytes will be for data header, and 2 bytes for padding
+		part := make([]byte, 256) // we need to read less than MaxPacketSize due to padding being added later
 		n, err := io.ReadFull(res.Body, part)
 		p.AddDataFrame(part[:n], n != 256)
 		if err != nil {
@@ -278,51 +332,4 @@ func (h *Node) processRelay(c net.Conn, f *packet.Packet, key []byte) {
 		p.Pad()
 		c.Write(p.Bytes())
 	}
-}
-
-func (h *Node) processAsk(c net.Conn, f *packet.Packet) {
-	log.Println("this is an ask packet")
-	f.PrintInfo()
-	f.PopBytes(2)
-}
-
-// PublicKeyToBytes public key to bytes
-func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
-	pubASN1, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-
-	pubBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PUBLIC KEY",
-		Bytes: pubASN1,
-	})
-
-	return pubBytes, nil
-}
-
-// BytesToPublicKey bytes to public key
-func BytesToPublicKey(pub []byte) *rsa.PublicKey {
-	block, _ := pem.Decode(pub)
-	if block == nil || block.Type != "RSA PUBLIC KEY" {
-		log.Fatal("failed to decode public key PEM block")
-	}
-	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Fatal(err)
-	}
-	key, ok := ifc.(*rsa.PublicKey)
-	if !ok {
-		log.Fatal("not ok")
-	}
-	return key
-}
-
-func (h *Node) Encrypt(data []byte) ([]byte, error) {
-	return rsa.EncryptOAEP(sha256.New(), rand.Reader, h.pubKey, data, []byte(""))
-}
-
-func (h *Node) Decrypt(data []byte) ([]byte, error) {
-	return rsa.DecryptOAEP(sha256.New(), rand.Reader, h.privKey, data, []byte(""))
 }

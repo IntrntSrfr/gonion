@@ -10,9 +10,11 @@ import (
 	"github.com/intrntsrfr/gonion/client"
 )
 
-func main() {
-	var err error
+const directoryURL = "http://localhost:9051/api/nodes"
 
+func main() {
+
+	var err error
 	var method string
 	flag.StringVar(&method, "m", "GET", "HTTP method to use")
 	flag.Parse()

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+
 	"github.com/tidwall/secret"
 )
 
@@ -125,21 +126,23 @@ func (p *Packet) PrintInfo() {
 }
 
 // AESEncrypt AES encrypts the current bytearray with a provided key
-func (p *Packet) AESEncrypt(key []byte) {
+func (p *Packet) AESEncrypt(key []byte) error {
 	enc, err := secret.Encrypt(string(key), p.data)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	p.data = enc
+	return nil
 }
 
 // AESDecrypt AES decrypts the current bytearray with a provided key
-func (p *Packet) AESDecrypt(key []byte) {
+func (p *Packet) AESDecrypt(key []byte) error {
 	dec, err := secret.Decrypt(string(key), p.data)
 	if err != nil {
-		panic(dec)
+		return err
 	}
 	p.data = dec
+	return nil
 }
 
 // RSAEncrypt RSA encrypts the current bytearray with a provided key

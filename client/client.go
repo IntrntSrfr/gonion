@@ -3,12 +3,9 @@ package client
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -60,8 +57,8 @@ func (cli *Client) closeConnection() {
 	cli.conn.Close()
 }
 
-// getNodes fetches node info from the directory node, tracks and returns it
-func (cli *Client) getNodes() []*gonion.NodeInfo {
+// getNodeNetwork fetches node info from the directory node, tracks and returns it
+func (cli *Client) getNodeNetwork() []*gonion.NodeInfo {
 	res, err := http.DefaultClient.Get(cli.directoryURL)
 	if err != nil {
 		log.Fatal(err)
@@ -82,7 +79,8 @@ func (cli *Client) getNodes() []*gonion.NodeInfo {
 	return nodes
 }
 
-// Do uses the client to send an HTTPRequest through the node network and get a response back
+// Do uses the client to send an HTTPRequest through the node network and get a response back.
+// It creates a new Client for every request to make sure that secrets and nodes are new for each request.
 func Do(req *gonion.HTTPRequest) *bytes.Buffer {
 	c := &Client{directoryURL: DirURL}
 	return c.do(req)
@@ -97,7 +95,7 @@ func (cli *Client) exchangeSecrets() {
 
 // exchangeSecret connects to a node through an amount of relays and exchanges a secret with it
 func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeInfo) []byte {
-	pub := BytesToPublicKey(node.PublicKey)
+	pub, _ := gonion.BytesToPublicKey(node.PublicKey)
 	askP := packet.NewPacket()
 
 	// make the client secret
@@ -168,7 +166,7 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 	inner := bytes.NewBuffer(marshalRequest(req))
 
 	// first we must get the node info
-	nodes := cli.getNodes()
+	nodes := cli.getNodeNetwork()
 
 	if len(nodes) < 3 {
 		log.Fatal("too few nodes")
@@ -263,29 +261,4 @@ func closeConn(c net.Conn) {
 	}
 	log.Println("closed connection")
 
-}
-
-func Encrypt(data []byte, pub *rsa.PublicKey) ([]byte, error) {
-	return rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, data, []byte(""))
-}
-
-func Decrypt(data []byte, priv *rsa.PrivateKey) ([]byte, error) {
-	return rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, data, []byte(""))
-}
-
-// BytesToPublicKey turns the byte array of a public key to a *rsa.PublicKey struct
-func BytesToPublicKey(pub []byte) *rsa.PublicKey {
-	block, _ := pem.Decode(pub)
-	if block == nil || block.Type != "RSA PUBLIC KEY" {
-		log.Fatal("failed to decode public key PEM block")
-	}
-	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Fatal(err)
-	}
-	key, ok := ifc.(*rsa.PublicKey)
-	if !ok {
-		log.Fatal("not ok")
-	}
-	return key
 }

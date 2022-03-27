@@ -1,60 +1,39 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
+	"flag"
 	"log"
 	"net"
-	"net/http"
 
-	"github.com/intrntsrfr/gonion"
 	"github.com/intrntsrfr/gonion/node"
 )
 
 func main() {
 
-	var p string
-	fmt.Print("what port u wanna use:")
-	fmt.Scan(&p)
-	fmt.Println()
+	var addr, port string
 
-	// get the outbound IP for the node, can probably be changed to an environment variable
-	localIP := GetOutIP()
-	host, _, _ := net.SplitHostPort(localIP)
-	fmt.Println("local ip:", host)
+	flag.StringVar(&addr, "ip", "", "ip address of the computer, will use localhost if none is provided")
+	flag.StringVar(&port, "port", "", "port to run the node on")
+	flag.Parse()
 
-	// create new node and generate keypairs
-	h := new(node.Node)
-	h.GenerateKeypair()
-
-	n := &gonion.NodeInfo{
-		IP:        host,
-		Port:      p,
-		PublicKey: h.PubKeyBytes(),
+	if addr == "" {
+		addr, _, _ = net.SplitHostPort(getLocalIP())
 	}
-	d, _ := json.MarshalIndent(n, "", "\t")
 
-	// the node can then add itself to the node directory
-	res, err := http.Post("http://localhost:9051/api/nodes", "application/json", bytes.NewBuffer(d))
+	if port == "" {
+		log.Fatal("you need to specify a port")
+	}
+
+	// create new node and generate keypair
+	h := &node.Node{}
+	err := h.Run(addr, port)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// if OK is not returned, something went wrong and the program will exit
-	if res.StatusCode != http.StatusOK {
-		log.Fatal("unable to join the node network")
-	}
-
-	log.Println("joined node network")
-
-	// start listening for connections
-	h.StartListenAtPort(p)
-	h.Listen()
 }
 
-// GetOutIP gets the outbound local IP
-func GetOutIP() string {
+// getLocalIP gets the local IP
+func getLocalIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		log.Fatal(err)

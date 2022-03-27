@@ -15,9 +15,9 @@ type Directory struct {
 }
 
 // Serve serves a directory node API at port 9051
-func (d *Directory) Serve() {
+func (d *Directory) Serve() error {
 	d.registerControllers()
-	http.ListenAndServe(":9051", d.R)
+	return http.ListenAndServe(":9051", d.R)
 }
 
 func NewDirectory(r *gin.Engine) *Directory {
