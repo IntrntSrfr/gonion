@@ -3,20 +3,20 @@
 ## Introduction
 
 Gonion is an onion routing service that lets clients send HTTP requests through a network of
-nodes. The most important factor is the privacy and security of the data that is sent. 
-The data is sent through secure and encrypted tunnels, and the data itself is encrypted 
-on top of that as well. The client can be sure that their privacy and their security is 
-maintained by using Gonion. (This is obviously a bit of an over-exaggeration, as having a 
+nodes. The most important factor is the privacy and security of the data that is sent.
+The data is sent through secure and encrypted tunnels, and the data itself is encrypted
+on top of that as well. The client can be sure that their privacy and their security is
+maintained by using Gonion. (This is obviously a bit of an over-exaggeration, as having a
 small amount of users basically makes it insecure.)
 
-Gonion consists of 3 components. A client, nodes, and a directory. The client is what the 
+Gonion consists of 3 components. A client, nodes, and a directory. The client is what the
 user will use to send requests to the Node network. The network consists of nodes. A Node
-is a small server that either relays data, or fires a request on the behalf of a client. 
-The directory is a server that keeps data of all active nodes. The client needs to be able 
-to connect to the directory to be able to get access to Node data, otherwise the client 
+is a small server that either relays data, or fires a request on the behalf of a client.
+The directory is a server that keeps data of all active nodes. The client needs to be able
+to connect to the directory to be able to get access to Node data, otherwise the client
 will be unable to send data anywhere.
 
-## Implemented functionality 
+## Implemented functionality
 
 * Sending GET requests and saving data to file
 * Encryption back and forth using AES-256-CFB and RSA.

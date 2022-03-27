@@ -1,43 +1,30 @@
 package packet
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/binary"
 	"reflect"
 	"testing"
 )
 
 func TestNewPacket(t *testing.T) {
-	tests := []struct {
-		name string
-		want *Packet
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NewPacket(); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewPacket() = %v, want %v", got, tt.want)
-			}
-		})
+	p := NewPacket()
+	if len(p.data) != 0 {
+		t.Errorf("packet should be empty, but has length of %v bytes", len(p.data))
 	}
 }
 
 func TestNewPacketFromBytes(t *testing.T) {
-	type args struct {
-		data []byte
+	// valid, final data packet with length 4 and []byte("test") as data
+	data := []byte{129, 0, 0, 4, 116, 101, 115, 116}
+	p := NewPacketFromBytes(data)
+	if !p.Final() {
+		t.Errorf("packet should be final, it is not")
 	}
-	tests := []struct {
-		name string
-		args args
-		want *Packet
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NewPacketFromBytes(tt.args.data); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewPacketFromBytes() = %v, want %v", got, tt.want)
-			}
-		})
+
+	if ct := p.CurrentFrameType(); ct != DataPacket {
+		t.Errorf("packet type should be %v, it is %v", DataPacket, ct)
 	}
 }
 
@@ -47,7 +34,6 @@ func TestPacket_CurrentFrameType(t *testing.T) {
 		p    *Packet
 		want Type
 	}{
-		// TODO: Add test cases.
 		{
 			name: "valid data packet",
 			p:    NewPacket().AddDataFrame([]byte("test"), false),
@@ -106,126 +92,107 @@ func TestPacket_Final(t *testing.T) {
 }
 
 func TestPacket_AddDataFrame(t *testing.T) {
-	type args struct {
-		data  []byte
-		final bool
+	p := NewPacket()
+	p.AddDataFrame([]byte("test"), true)
+	if got := p.CurrentFrameType(); got != DataPacket {
+		t.Errorf("wanted frame type: %v; got: %v", DataPacket, got)
 	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-		want *Packet
-	}{
-		// TODO: Add test cases.
+	p.PopBytes(2) // remove type header
+
+	// test length written in header
+	length := binary.BigEndian.Uint16(p.PopBytes(2))
+	if length != 4 {
+		t.Errorf("wanted length: %v; got: %v", 4, length)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.p.AddDataFrame(tt.args.data, tt.args.final); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Packet.AddDataFrame() = %v, want %v", got, tt.want)
-			}
-		})
+
+	// test actual length of remaining data
+	if len(p.data) != int(length) {
+		t.Errorf("wanted length: %v; got: %v", length, len(p.data))
 	}
 }
 
 func TestPacket_AddRelayFrame(t *testing.T) {
-	type args struct {
-		ip    [4]byte
-		port  [2]byte
-		final bool
-	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-		want *Packet
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.p.AddRelayFrame(tt.args.ip, tt.args.port, tt.args.final); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Packet.AddRelayFrame() = %v, want %v", got, tt.want)
-			}
-		})
+	p := NewPacket()
+	p.AddRelayFrame([4]byte{1, 2, 3, 4}, [2]byte{1, 2}, true)
+	if got := p.CurrentFrameType(); got != RelayPacket {
+		t.Errorf("wanted frame type: %v; got: %v", RelayPacket, got)
 	}
 }
 
 func TestPacket_AddAskFrame(t *testing.T) {
-	type args struct {
-		key   []byte
-		final bool
-	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-		want *Packet
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.p.AddAskFrame(tt.args.key, tt.args.final); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Packet.AddAskFrame() = %v, want %v", got, tt.want)
-			}
-		})
+	p := NewPacket()
+	p.AddAskFrame([]byte("key"), true)
+	if got := p.CurrentFrameType(); got != AskPacket {
+		t.Errorf("wanted frame type: %v; got: %v", AskPacket, got)
 	}
 }
 
 func TestPacket_PopBytes(t *testing.T) {
-	type args struct {
-		n int
+	p := NewPacket()
+	p.AddDataFrame([]byte("testing"), true)
+
+	got := p.PopBytes(2)
+
+	if len(got) != 2 {
+		t.Errorf("wanted to receive 2 bytes from PopBytes(), received %v", len(got))
 	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-		want []byte
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.p.PopBytes(tt.args.n); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Packet.PopBytes() = %v, want %v", got, tt.want)
-			}
-		})
+
+	if len(p.data) != len([]byte("testing"))+2 {
+		t.Errorf("packet data should be %v, it is %v", len([]byte("testing"))+2, len(p.data))
 	}
 }
 
-func TestPacket_AESEncrypt(t *testing.T) {
-	type args struct {
-		key []byte
+func TestPacketAESCrypto(t *testing.T) {
+	key := "testing key"
+	start := "this is a test string"
+
+	p := NewPacket()
+	p.AddDataFrame([]byte(start), true)
+
+	// encrypt 10x
+	for i := 0; i < 10; i++ {
+		p.AESEncrypt([]byte(key))
 	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-	}{
-		// TODO: Add test cases.
+
+	// decrypt 10x
+	for i := 0; i < 10; i++ {
+		p.AESDecrypt([]byte(key))
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.p.AESEncrypt(tt.args.key)
-		})
+
+	// remove header
+	p.PopBytes(4)
+	got := string(p.data)
+	if got != start {
+		t.Errorf("got: %v; want: %v", got, start)
 	}
 }
 
-func TestPacket_AESDecrypt(t *testing.T) {
-	type args struct {
-		key []byte
+func TestPacketRSACrypto(t *testing.T) {
+	// generate keypair with 2048 bits
+	bitSize := 2048
+	private, err := rsa.GenerateKey(rand.Reader, bitSize)
+	if err != nil {
+		t.Error(err)
 	}
-	tests := []struct {
-		name string
-		p    *Packet
-		args args
-	}{
-		// TODO: Add test cases.
+	start := "this is a test string"
+
+	p := NewPacket()
+	p.AddDataFrame([]byte(start), true)
+
+	err = p.RSAEncrypt(&private.PublicKey)
+	if err != nil {
+		t.Error(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.p.AESDecrypt(tt.args.key)
-		})
+
+	err = p.RSADecrypt(private)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// remove packet header
+	p.PopBytes(4)
+	if string(p.data) != start {
+		t.Errorf("RSA encryption failed. wanted %v after decrypt; got %v", start, string(p.data))
 	}
 }
 
@@ -235,7 +202,6 @@ func TestPacket_Bytes(t *testing.T) {
 		p    *Packet
 		want []byte
 	}{
-		// TODO: Add test cases.
 		{
 			name: "valid bytes from data frame",
 			p:    NewPacket().AddDataFrame([]byte{1, 2, 3}, true),
@@ -251,13 +217,12 @@ func TestPacket_Bytes(t *testing.T) {
 	}
 }
 
-func TestPacket_PadTrim(t *testing.T) {
+func TestPacketPadTrim(t *testing.T) {
 	tests := []struct {
 		name string
 		p    *Packet
 		want []byte
 	}{
-		// TODO: Add test cases.
 		{
 			name: "valid bytes from data frame",
 			p:    NewPacket().AddDataFrame([]byte{1, 2, 3}, true).Pad().Trim(),
@@ -268,47 +233,6 @@ func TestPacket_PadTrim(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.p.Bytes(); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Packet.Bytes() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPKCSPadding(t *testing.T) {
-	type args struct {
-		ciphertext []byte
-		blockSize  int
-	}
-	tests := []struct {
-		name string
-		args args
-		want []byte
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := PKCSPadding(tt.args.ciphertext, tt.args.blockSize); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("PKCSPadding() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPKCSTrimming(t *testing.T) {
-	type args struct {
-		ciphertext []byte
-	}
-	tests := []struct {
-		name string
-		args args
-		want []byte
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := PKCSTrimming(tt.args.ciphertext); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("PKCSTrimming() = %v, want %v", got, tt.want)
 			}
 		})
 	}

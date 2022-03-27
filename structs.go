@@ -5,6 +5,13 @@ import (
 	"net/url"
 )
 
+var (
+	EndpointDirectory = "http://localhost:9051"
+	EndpointAPI       = EndpointDirectory + "/api"
+	EndpointNodes     = EndpointAPI + "/nodes"
+	EndpointHealth    = EndpointAPI + "/health"
+)
+
 type NodeInfo struct {
 	IP        string `json:"ip"`
 	Port      string `json:"port"`
