@@ -34,6 +34,7 @@ func (d *Directory) registerControllers() {
 	d.R.POST("/api/nodes", d.addNode)
 }
 
+// getNodes returns all the nodes that the directory keeps track of currently
 func (d *Directory) getNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, d.Nodes)
 }

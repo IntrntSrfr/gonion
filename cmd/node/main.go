@@ -25,7 +25,8 @@ func main() {
 	}
 
 	// create new node and generate keypair
-	h := &node.Node{}
+	h := node.NewNode()
+	//h := &node.Node{}
 	err := h.Run(addr, port)
 	if err != nil {
 		log.Fatal(err)

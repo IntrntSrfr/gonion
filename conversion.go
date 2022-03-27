@@ -12,7 +12,7 @@ var (
 	ErrFailedRSADecode = errors.New("block is nil or not RSA PUBLIC KEY type")
 )
 
-// PublicKeyToBytes public key to bytes
+// PublicKeyToBytes converts a public key to its []byte representation in PEM format
 func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
 	pubASN1, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
@@ -27,7 +27,7 @@ func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
 	return pubBytes, nil
 }
 
-// BytesToPublicKey bytes to public key
+// BytesToPublicKey converts a []byte to a *rsa.PublicKey from a PEM format
 func BytesToPublicKey(pub []byte) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode(pub)
 	if block == nil || block.Type != "RSA PUBLIC KEY" {
@@ -35,7 +35,7 @@ func BytesToPublicKey(pub []byte) (*rsa.PublicKey, error) {
 	}
 	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 	key, ok := ifc.(*rsa.PublicKey)
 	if !ok {

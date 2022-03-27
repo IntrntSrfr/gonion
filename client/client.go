@@ -6,25 +6,27 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	rand2 "math/rand"
 	"net"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/intrntsrfr/gonion"
 	"github.com/intrntsrfr/gonion/packet"
 )
+
+var ErrTooFewNodes = errors.New("too few nodes were passed")
 
 // NodeCount will be 3 for this client.
 const NodeCount = 3
 
 // MaxContent is the max amount of bytes a data frame can hold as a maximum
 const MaxContent = 256
-
-// DirURL is the directory node URL
-const DirURL = "http://localhost:9051/api/nodes"
 
 // Client represents a Gonion client that sends a request through the node network
 type Client struct {
@@ -54,110 +56,22 @@ func (cli *Client) connect(node *gonion.NodeInfo) {
 
 // closeConnection closes a tcp connection
 func (cli *Client) closeConnection() {
-	cli.conn.Close()
-}
-
-// getNodeNetwork fetches node info from the directory node, tracks and returns it
-func (cli *Client) getNodeNetwork() []*gonion.NodeInfo {
-	res, err := http.DefaultClient.Get(cli.directoryURL)
+	err := cli.conn.Close()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
-	defer func() {
-		err = res.Body.Close()
-		if err != nil {
-			log.Println(err)
-		}
-	}()
-
-	var nodes []*gonion.NodeInfo
-	err = json.NewDecoder(res.Body).Decode(&nodes)
-	if err != nil {
-		log.Fatal(err)
-	}
-	cli.nodes = nodes
-	return nodes
 }
 
 // Do uses the client to send an HTTPRequest through the node network and get a response back.
 // It creates a new Client for every request to make sure that secrets and nodes are new for each request.
-func Do(req *gonion.HTTPRequest) *bytes.Buffer {
-	c := &Client{directoryURL: DirURL}
+func Do(req *gonion.HTTPRequest) (*bytes.Buffer, error) {
+	rand2.Seed(time.Now().Unix())                    // init random for node selection
+	c := &Client{directoryURL: gonion.EndpointNodes} // for each request, create a new client
 	return c.do(req)
 }
 
-// exchangeSecrets exchanges secrets with 3 nodes and tracks them for later use
-func (cli *Client) exchangeSecrets() {
-	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[0]))
-	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[1], cli.nodes[1]))
-	cli.secrets = append(cli.secrets, cli.exchangeSecret(cli.nodes[2], cli.nodes[2], cli.nodes[1]))
-}
-
-// exchangeSecret connects to a node through an amount of relays and exchanges a secret with it
-func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeInfo) []byte {
-	pub, _ := gonion.BytesToPublicKey(node.PublicKey)
-	askP := packet.NewPacket()
-
-	// make the client secret
-	ck := make([]byte, 16)
-	rand.Read(ck)
-
-	// add an ask frame containing the client secret
-	askP.AddAskFrame(ck, true)
-
-	// RSA encrypt the client secret with the public key from the input node
-	err := askP.RSAEncrypt(pub)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for i := range relays {
-		node := relays[i]
-		ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
-		if err != nil {
-			log.Fatal(err)
-		}
-		nodeIP := ap.Addr().As4()
-		nodePort := ap.Port()
-
-		// add relay frame with next node info
-		askP.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, true)
-		askP.AESEncrypt(cli.secrets[len(cli.secrets)-i-1])
-	}
-	askP.Pad() // pad packet before sending
-
-	// send ask packet
-	cli.conn.Write(askP.Bytes())
-
-	// read 512 byte packets. anything that is not 512 bytes means something is wrong.
-	res := make([]byte, 512)
-	_, err = io.ReadFull(cli.conn, res)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	skP := packet.NewPacketFromBytes(res)
-	skP.Trim()
-
-	// decrypt the packet based on how many relays it has been through
-	for i := range relays {
-		skP.AESDecrypt(cli.secrets[i])
-	}
-
-	// pop the data frame header, it isnt needed
-	skP.PopBytes(4)
-	sk := skP.Bytes() // the only data left will be the node secret
-
-	sharedKey := append(ck, sk...)
-	hashed := sha256.New()
-	hashed.Write(sharedKey)
-	secret := hashed.Sum(nil) // create the final secret for the input node
-
-	return secret
-}
-
 // do performs a key exchange with the node network, then sends a request through it and receives a response
-func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
+func (cli *Client) do(req *gonion.HTTPRequest) (*bytes.Buffer, error) {
 	if req == nil {
 		log.Fatal("request body cannot be nil")
 	}
@@ -166,9 +80,18 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 	inner := bytes.NewBuffer(marshalRequest(req))
 
 	// first we must get the node info
-	nodes := cli.getNodeNetwork()
-
-	if len(nodes) < 3 {
+	nodes, err := cli.getNodeNetwork()
+	if err != nil {
+		return nil, err
+	}
+	/*
+		// random selection is not working as intended, so for now this will have to wait
+		nodes, err := cli.getNodeSelection(network, NodeCount)
+		if err != nil {
+			log.Fatal(err)
+		}
+	*/
+	if len(nodes) < NodeCount {
 		log.Fatal("too few nodes")
 	}
 
@@ -177,7 +100,10 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 	defer cli.closeConnection()
 
 	// exchange secrets with each node and keep track of them
-	cli.exchangeSecrets()
+	err = cli.exchangeSecrets()
+	if err != nil {
+		return nil, err
+	}
 
 	// partition the body into sizes we want to manage
 	// send each packet separately to the next node
@@ -185,13 +111,16 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		partialMsg := make([]byte, MaxContent)
 		n, err := io.ReadFull(inner, partialMsg) // read from the inner message buffer into several partial messages
 		if err != nil && err != io.ErrUnexpectedEOF {
-			log.Fatal(err)
+			return nil, err
 		}
 		p := packet.NewPacket()
 		p.AddDataFrame(partialMsg[:n], n != MaxContent) // if n != max content, it means we reached the end of the data.
 
 		// packet should be encrypted here with node 3 key
-		p.AESEncrypt(cli.secrets[len(cli.secrets)-1])
+		err = p.AESEncrypt(cli.secrets[len(cli.secrets)-1])
+		if err != nil {
+			return nil, err
+		}
 
 		// add 2 encrypted relay frames, we want different nodes based on the layer of encryption we are doing, so the indices will be funny
 		for i := 2; i > 0; i-- {
@@ -207,7 +136,10 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 			p.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, n != MaxContent)
 
 			// layer of encryption here
-			p.AESEncrypt(cli.secrets[i-1])
+			err = p.AESEncrypt(cli.secrets[i-1])
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// pad the packet before sending
@@ -219,7 +151,7 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 			log.Fatal(err)
 		}
 
-		// if we didnt write max content, it means we reached the end
+		// if we did not write max content, it means we reached the end
 		if n != MaxContent {
 			break
 		}
@@ -231,14 +163,17 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 		tmp := make([]byte, packet.MaxPacketSize)
 		_, err := io.ReadFull(cli.conn, tmp)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 		p := packet.NewPacketFromBytes(tmp)
 		p.Trim() // make a packet from the incoming bytes and trim it
 
 		// 3x AES decrypt with the shared node secrets
 		for i := 0; i < 3; i++ {
-			p.AESDecrypt(cli.secrets[i])
+			err = p.AESDecrypt(cli.secrets[i])
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		header := p.PopBytes(2)
@@ -251,14 +186,140 @@ func (cli *Client) do(req *gonion.HTTPRequest) *bytes.Buffer {
 
 	fmt.Println(fmt.Sprintf("received data with length of %v bytes", resp.Len()))
 
-	return resp
+	return resp, nil
 }
 
-func closeConn(c net.Conn) {
-	err := c.Close()
+// getNodeNetwork fetches node info from the directory node, tracks and returns it
+func (cli *Client) getNodeNetwork() ([]*gonion.NodeInfo, error) {
+	res, err := http.DefaultClient.Get(cli.directoryURL)
 	if err != nil {
-		log.Println(err)
+		return nil, err
 	}
-	log.Println("closed connection")
+	defer func() {
+		err = res.Body.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}()
 
+	var nodes []*gonion.NodeInfo
+	err = json.NewDecoder(res.Body).Decode(&nodes)
+	if err != nil {
+		return nil, err
+	}
+	cli.nodes = nodes
+	return nodes, nil
+}
+
+// getNodeSelection returns n *NodeInfo objects, selected in a random order.
+func (cli *Client) getNodeSelection(nodes []*gonion.NodeInfo, n int) ([]*gonion.NodeInfo, error) {
+	if len(nodes) < n {
+		return nil, ErrTooFewNodes
+	}
+
+	var selection []*gonion.NodeInfo
+	indices := rand2.Perm(len(nodes))
+	for i := 0; i < 3; i++ {
+		selection = append(selection, nodes[indices[i]])
+	}
+
+	return selection, nil
+}
+
+// exchangeSecrets exchanges secrets with 3 nodes and tracks them for later use
+func (cli *Client) exchangeSecrets() error {
+	s1, err := cli.exchangeSecret(cli.nodes[0])
+	if err != nil {
+		return err
+	}
+	cli.secrets = append(cli.secrets, s1)
+
+	s2, err := cli.exchangeSecret(cli.nodes[1], cli.nodes[1])
+	if err != nil {
+		return err
+	}
+	cli.secrets = append(cli.secrets, s2)
+
+	s3, err := cli.exchangeSecret(cli.nodes[2], cli.nodes[2], cli.nodes[1])
+	if err != nil {
+		return err
+	}
+	cli.secrets = append(cli.secrets, s3)
+
+	return nil
+}
+
+// exchangeSecret connects to a node through an amount of relays and exchanges a secret with it
+func (cli *Client) exchangeSecret(node *gonion.NodeInfo, relays ...*gonion.NodeInfo) ([]byte, error) {
+	pub, _ := gonion.BytesToPublicKey(node.PublicKey)
+	askP := packet.NewPacket()
+
+	// make the client secret
+	ck := make([]byte, 16)
+	_, err := rand.Read(ck)
+	if err != nil {
+		return nil, err
+	}
+
+	// add an ask frame containing the client secret
+	askP.AddAskFrame(ck, true)
+
+	// RSA encrypt the client secret with the public key from the input node
+	err = askP.RSAEncrypt(pub)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for i := range relays {
+		node := relays[i]
+		ap, err := netip.ParseAddrPort(fmt.Sprintf("%v:%v", node.IP, node.Port))
+		if err != nil {
+			log.Fatal(err)
+		}
+		nodeIP := ap.Addr().As4()
+		nodePort := ap.Port()
+
+		// add relay frame with next node info
+		askP.AddRelayFrame(nodeIP, [2]byte{byte((nodePort & 0xff00) >> 8), byte(nodePort & 0xff)}, true)
+		err = askP.AESEncrypt(cli.secrets[len(cli.secrets)-i-1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	askP.Pad() // pad packet before sending
+
+	// send ask packet
+	_, err = cli.conn.Write(askP.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	// read 512 byte packets. anything that is not 512 bytes means something is wrong.
+	res := make([]byte, 512)
+	_, err = io.ReadFull(cli.conn, res)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	skP := packet.NewPacketFromBytes(res)
+	skP.Trim()
+
+	// decrypt the packet based on how many relays it has been through
+	for i := range relays {
+		err = skP.AESDecrypt(cli.secrets[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// pop the data frame header, it isnt needed
+	skP.PopBytes(4)
+	sk := skP.Bytes() // the only data left will be the node secret
+
+	sharedKey := append(ck, sk...)
+	hashed := sha256.New()
+	hashed.Write(sharedKey)
+	secret := hashed.Sum(nil) // create the final secret for the input node
+
+	return secret, nil
 }

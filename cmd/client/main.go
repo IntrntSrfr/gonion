@@ -10,10 +10,7 @@ import (
 	"github.com/intrntsrfr/gonion/client"
 )
 
-const directoryURL = "http://localhost:9051/api/nodes"
-
 func main() {
-
 	var err error
 	var method string
 	flag.StringVar(&method, "m", "GET", "HTTP method to use")
@@ -38,8 +35,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	resp := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	io.Copy(out, resp)
+	_, err = io.Copy(out, resp)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 }
