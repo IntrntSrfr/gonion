@@ -12,6 +12,9 @@ var (
 	ErrFailedRSADecode = errors.New("block is nil or not RSA PUBLIC KEY type")
 )
 
+// conversion to and from bytes is heavily inspired from a gist
+// https://gist.github.com/miguelmota/3ea9286bd1d3c2a985b67cac4ba2130a
+
 // PublicKeyToBytes converts a public key to its []byte representation in PEM format
 func PublicKeyToBytes(pub *rsa.PublicKey) ([]byte, error) {
 	pubASN1, err := x509.MarshalPKIXPublicKey(pub)

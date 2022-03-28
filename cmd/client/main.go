@@ -12,13 +12,17 @@ import (
 
 func main() {
 	var err error
-	var method string
-	flag.StringVar(&method, "m", "GET", "HTTP method to use")
+
+	/*
+		var method string
+		flag.StringVar(&method, "m", "GET", "HTTP method to use")
+	*/
+
 	flag.Parse()
 
 	dst := flag.Arg(0)
 	if dst == "" {
-		log.Fatal("you need to specify a destination")
+		log.Fatal("you need to specify a resource")
 	}
 
 	outStr := flag.Arg(1)
